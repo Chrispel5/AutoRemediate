@@ -32,6 +32,7 @@
   <!-- CONNECTION STATUS BAR -->
   <div id="connection-bar" class="connection-bar">
     <span id="cloudflare-status" class="status-indicator disconnected">Cloudflare: Not Connected</span>
+    <span id="aws-status" class="status-indicator disconnected">AWS: Not Connected</span>
   </div>
 
   <!-- SETTINGS MODAL -->
@@ -43,8 +44,27 @@
         <input type="password" id="cf-token" placeholder="Enter your Cloudflare API token">
         <small>Required for DNS auto-remediation (DMARC, SPF, stale records)</small>
       </div>
+      <div class="modal-actions" style="margin-bottom: 15px;">
+        <button id="btn-connect" class="btn-primary">Connect Cloudflare</button>
+      </div>
+
+      <hr style="border-color: rgba(255,255,255,0.08); margin: 20px 0;">
+      <h3 style="color: #ff9900; font-size: 14px; margin-bottom: 10px;">☁️ AWS (CloudFront + Route 53)</h3>
+      <div class="form-group">
+        <label>AWS Access Key ID</label>
+        <input type="text" id="aws-access-key" placeholder="AKIA...">
+      </div>
+      <div class="form-group">
+        <label>AWS Secret Access Key</label>
+        <input type="password" id="aws-secret-key" placeholder="Enter your AWS secret key">
+      </div>
+      <div class="form-group">
+        <label>AWS Region</label>
+        <input type="text" id="aws-region" placeholder="us-east-1" value="us-east-1">
+        <small>Required for CloudFront Response Headers & Route 53 DNS auto-remediation</small>
+      </div>
       <div class="modal-actions">
-        <button id="btn-connect" class="btn-primary">Connect</button>
+        <button id="btn-connect-aws" class="btn-primary" style="background: linear-gradient(135deg, #ff9900, #ff6600);">Connect AWS</button>
         <button id="btn-close-settings" class="btn-ghost">Cancel</button>
       </div>
     </div>

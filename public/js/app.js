@@ -81,6 +81,64 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Handle AWS connection verification
+  const btnConnectAws = document.getElementById('btn-connect-aws');
+  const awsAccessKeyInput = document.getElementById('aws-access-key');
+  const awsSecretKeyInput = document.getElementById('aws-secret-key');
+  const awsRegionInput = document.getElementById('aws-region');
+  const awsStatus = document.getElementById('aws-status');
+
+  btnConnectAws.addEventListener('click', async () => {
+    const accessKeyId = awsAccessKeyInput.value.trim();
+    const secretAccessKey = awsSecretKeyInput.value.trim();
+    const region = awsRegionInput.value.trim() || 'us-east-1';
+    
+    if (!accessKeyId || !secretAccessKey) {
+      alert('Please enter both AWS Access Key ID and Secret Access Key.');
+      return;
+    }
+
+    btnConnectAws.disabled = true;
+    btnConnectAws.textContent = 'Connecting...';
+
+    try {
+      const response = await fetch('/api/connect-aws', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessKeyId, secretAccessKey, region })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        window.isCloudflareConnected = true; // reuse same flag for "any provider connected"
+        awsStatus.textContent = 'AWS: Connected';
+        awsStatus.classList.remove('disconnected');
+        awsStatus.classList.add('connected');
+        settingsModal.classList.add('hidden');
+        alert('Connected to AWS successfully!');
+        if (currentScanData) {
+          window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
+        }
+      } else {
+        alert(`AWS Connection Failed: ${data.error}`);
+      }
+    } catch (err) {
+      // Fallback for static demo mode
+      window.isCloudflareConnected = true;
+      awsStatus.textContent = 'AWS: Connected (Demo)';
+      awsStatus.classList.remove('disconnected');
+      awsStatus.classList.add('connected');
+      settingsModal.classList.add('hidden');
+      alert('Connected (Local Simulation mode active).');
+      if (currentScanData) {
+        window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
+      }
+    } finally {
+      btnConnectAws.disabled = false;
+      btnConnectAws.textContent = 'Connect AWS';
+    }
+  });
+
   // Handle Scanning Target
   btnScan.addEventListener('click', async () => {
     const target = targetInput.value.trim();

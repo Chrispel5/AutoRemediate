@@ -23,6 +23,20 @@ module.exports = {
       description: 'Set Content-Security-Policy via S3 metadata values or CloudFront custom headers policy.',
       method: 'AWS CloudFront CLI / Console',
       code: 'aws cloudfront create-response-headers-policy --response-headers-policy-config ...'
+    },
+    cloudfront: {
+      description: 'Add CSP via CloudFront Response Headers Policy',
+      method: 'API',
+      code: `aws cloudfront create-response-headers-policy \\
+  --response-headers-policy-config '{
+    "Name": "AutoRemediate-CSP",
+    "SecurityHeadersConfig": {
+      "ContentSecurityPolicy": {
+        "ContentSecurityPolicy": "default-src \\'self\\'; script-src \\'self\\'",
+        "Override": true
+      }
+    }
+  }'`
     }
   },
   'server-version-exposed': {

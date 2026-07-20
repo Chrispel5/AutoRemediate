@@ -17,6 +17,10 @@ const dnsRemediator = require('./remediators/dnsRemediator');
 const headerRemediator = require('./remediators/headerRemediator');
 const reportBuilder = require('./utils/reportBuilder');
 
+const AWSConnector = require('./connectors/awsConnector');
+const cloudfrontRemediator = require('./remediators/cloudfrontRemediator');
+const route53Remediator = require('./remediators/route53Remediator');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -30,6 +34,13 @@ let cfConnection = {
   connected: false,
   token: null,
   zoneMap: new Map() // domain -> zoneId
+};
+let awsConnection = {
+  connected: false,
+  accessKeyId: null,
+  secretAccessKey: null,
+  region: 'us-east-1',
+  distributionMap: new Map() // domain -> distributionId
 };
 
 // Route: Connect to Cloudflare API
@@ -64,10 +75,40 @@ app.post('/api/connect', async (req, res) => {
 app.get('/api/status', (req, res) => {
   res.json({
     cloudflareConnected: cfConnection.connected,
+    awsConnected: awsConnection.connected,
     hasToken: !!cfConnection.token,
+    hasAwsKey: !!awsConnection.accessKeyId,
     cachedScans: scanCache.size,
     cachedZones: cfConnection.zoneMap.size
   });
+});
+
+// Route: Connect to AWS API
+app.post('/api/connect-aws', async (req, res) => {
+  const { accessKeyId, secretAccessKey, region } = req.body;
+  if (!accessKeyId || !secretAccessKey) {
+    return res.status(400).json({ error: 'AWS Access Key ID and Secret Access Key are required' });
+  }
+
+  const awsRegion = region || 'us-east-1';
+
+  try {
+    const connector = new AWSConnector(accessKeyId, secretAccessKey, awsRegion);
+    const isValid = await connector.verifyCredentials();
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid AWS Credentials' });
+    }
+
+    awsConnection.connected = true;
+    awsConnection.accessKeyId = accessKeyId;
+    awsConnection.secretAccessKey = secretAccessKey;
+    awsConnection.region = awsRegion;
+    awsConnection.distributionMap.clear();
+
+    return res.json({ success: true, message: 'Connected to AWS successfully' });
+  } catch (err) {
+    return res.status(500).json({ error: `Connection failed: ${err.message}` });
+  }
 });
 
 // Route: Trigger scan
@@ -157,27 +198,40 @@ app.post('/api/remediate', async (req, res) => {
     return res.status(400).json({ error: 'No automatic fix available for this finding' });
   }
 
-  console.log('[REMEDIATE] cfConnection.connected:', cfConnection.connected, '| hasToken:', !!cfConnection.token);
-  if (!cfConnection.connected || !cfConnection.token) {
-    return res.status(400).json({ error: 'Cloudflare connection required to apply fixes.' });
+  console.log('[REMEDIATE] cfConnected:', cfConnection.connected, '| awsConnected:', awsConnection.connected);
+  if ((!cfConnection.connected || !cfConnection.token) && (!awsConnection.connected || !awsConnection.accessKeyId)) {
+    return res.status(400).json({ error: 'Cloud provider connection required to apply fixes. Connect Cloudflare or AWS.' });
   }
 
   try {
-    const connector = new cloudflareConnector(cfConnection.token);
-    
-    // Cache or fetch zone id
-    let zoneId = cfConnection.zoneMap.get(scan.target);
-    if (!zoneId) {
-      zoneId = await connector.getZoneId(scan.target);
-      cfConnection.zoneMap.set(scan.target, zoneId);
-    }
-
     let remediationResult;
 
     if (finding.fix.type === 'dns' || finding.fix.type === 'dns-update' || finding.fix.type === 'dns-delete') {
-      remediationResult = await dnsRemediator.applyFix(connector, zoneId, scan.target, finding);
+      if (cfConnection.connected) {
+        const connector = new cloudflareConnector(cfConnection.token);
+        let zoneId = cfConnection.zoneMap.get(scan.target);
+        if (!zoneId) {
+          zoneId = await connector.getZoneId(scan.target);
+          cfConnection.zoneMap.set(scan.target, zoneId);
+        }
+        remediationResult = await dnsRemediator.applyFix(connector, zoneId, scan.target, finding);
+      } else if (awsConnection.connected) {
+        const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region);
+        remediationResult = await route53Remediator.applyFix(awsConn, scan.target, finding);
+      }
     } else if (finding.fix.type === 'cloudflare-rule') {
-      remediationResult = await headerRemediator.applyFix(connector, zoneId, scan.target, finding);
+      if (cfConnection.connected) {
+        const connector = new cloudflareConnector(cfConnection.token);
+        let zoneId = cfConnection.zoneMap.get(scan.target);
+        if (!zoneId) {
+          zoneId = await connector.getZoneId(scan.target);
+          cfConnection.zoneMap.set(scan.target, zoneId);
+        }
+        remediationResult = await headerRemediator.applyFix(connector, zoneId, scan.target, finding);
+      } else if (awsConnection.connected) {
+        const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region);
+        remediationResult = await cloudfrontRemediator.applyFix(awsConn, scan.target, finding);
+      }
     } else {
       return res.status(400).json({ error: `Fix type '${finding.fix.type}' is not auto-remediable.` });
     }

@@ -15,8 +15,10 @@ window.dashboard = (() => {
         remediationPath = 'SSH Access / config rewrite files';
         break;
       case 's3':
-        providerName = 'Amazon S3 Bucket (Static Web)';
-        remediationPath = 'AWS CLI / S3 Bucket metadata config policy';
+        providerName = 'Amazon S3 Bucket (Static Web) via CloudFront CDN';
+        remediationPath = window.isCloudflareConnected 
+          ? 'CloudFront Response Headers Policy / Route 53 DNS (AWS API)'
+          : 'AWS CLI / S3 Bucket metadata config policy';
         break;
       case 'cloudflare':
         providerName = 'Cloudflare proxy edge network';
