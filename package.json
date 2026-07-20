@@ -1,0 +1,15 @@
+{
+  "name": "autoremediate",
+  "version": "1.0.0",
+  "description": "Automated Web Security Scanner & Remediation Engine",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "node-fetch": "^2.7.0"
+  }
+}

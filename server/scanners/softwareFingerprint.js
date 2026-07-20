@@ -1,0 +1,84 @@
+const fetch = require('node-fetch');
+
+async function fingerprint(domain) {
+  const url = `https://${domain}`;
+  const pathChecks = ['/README.md', '/CHANGELOG.md', '/changelog.txt'];
+  let detectedInfo = [];
+
+  try {
+    // Check main response headers first
+    const mainResponse = await fetch(url, { method: 'GET', timeout: 5000 });
+    const serverHeader = mainResponse.headers.get('server') || '';
+    const xPoweredBy = mainResponse.headers.get('x-powered-by') || '';
+
+    if (serverHeader) {
+      detectedInfo.push(`Server Header: ${serverHeader}`);
+    }
+    if (xPoweredBy) {
+      detectedInfo.push(`Powered-By: ${xPoweredBy}`);
+    }
+
+    // HTML analysis for meta generator tags
+    const htmlText = await mainResponse.text();
+    const generatorMatch = htmlText.match(/<meta\s+name=["']generator["']\s+content=["']([^"']+)["']/i);
+    if (generatorMatch && generatorMatch[1]) {
+      detectedInfo.push(`Meta Generator: ${generatorMatch[1]}`);
+    }
+
+    // Proactively check common paths
+    for (const path of pathChecks) {
+      try {
+        const pathResponse = await fetch(url + path, { method: 'GET', timeout: 3000 });
+        if (pathResponse.status === 200) {
+          const content = await pathResponse.text();
+          // Check for version markers like "Version 1.2.3" or "v1.2.3" or framework version patterns
+          const versionMatch = content.match(/version\s*(\d+\.\d+(\.\d+)?)/i);
+          if (versionMatch) {
+            detectedInfo.push(`Changelog Version: ${versionMatch[1]} (found in ${path})`);
+          }
+        }
+      } catch (err) {
+        // Ignore single path failures
+      }
+    }
+
+    // Determine findings based on what was detected
+    const findingsExposed = detectedInfo.some(info => /\d+\.\d+/.test(info));
+
+    if (findingsExposed) {
+      return {
+        id: 'software-fingerprint-ver',
+        name: 'Outdated / Verifiable Software Stacks Exposed',
+        severity: 'HIGH',
+        status: 'FAIL',
+        evidence: detectedInfo.join('\n'),
+        description: 'Metadata or headers disclose specific framework, language, or system version details. This eases targeted exploit searches.',
+        fix: {
+          type: 'config',
+          notes: 'Disable meta generator tags in application headers, hide PHP X-Powered-By, and anonymize Server headers in configuration.'
+        }
+      };
+    }
+
+    return {
+      id: 'software-fingerprint',
+      name: 'Software Stacks Anonymized',
+      severity: 'PASS',
+      status: 'PASS',
+      evidence: detectedInfo.join('\n') || 'No headers or files disclosed technology versions.',
+      description: 'System software name or application version tags are successfully hidden from scanning components.'
+    };
+
+  } catch (err) {
+    return {
+      id: 'software-fingerprint-failed',
+      name: 'Software Fingerprinting Incomplete',
+      severity: 'LOW',
+      status: 'FAIL',
+      evidence: err.message,
+      description: 'Handshake timeout or network block halted software library analysis.'
+    };
+  }
+}
+
+module.exports = { fingerprint };

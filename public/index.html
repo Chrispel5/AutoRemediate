@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoRemediate — Security Scanner & Remediation Engine</title>
+  <meta name="description" content="Automated web security scanner and remediation engine. Scan, detect, and fix security vulnerabilities automatically.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <!-- HEADER -->
+  <header id="app-header">
+    <div class="logo">
+      <span class="logo-icon">🛡️</span>
+      <h1>AutoRemediate</h1>
+      <span class="version-badge">v1.0</span>
+    </div>
+    <div class="header-actions">
+      <button id="btn-settings" class="btn-ghost">⚙️ Settings</button>
+      <button id="btn-demo" class="btn-ghost">🎮 Demo Mode</button>
+    </div>
+  </header>
+
+  <!-- CONNECTION STATUS BAR -->
+  <div id="connection-bar" class="connection-bar">
+    <span id="cloudflare-status" class="status-indicator disconnected">Cloudflare: Not Connected</span>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-content glass-card">
+      <h2>Settings — Connect Infrastructure</h2>
+      <div class="form-group">
+        <label>Cloudflare API Token</label>
+        <input type="password" id="cf-token" placeholder="Enter your Cloudflare API token">
+        <small>Required for DNS auto-remediation (DMARC, SPF, stale records)</small>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-connect" class="btn-primary">Connect</button>
+        <button id="btn-close-settings" class="btn-ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HERO / SCAN INPUT -->
+  <section id="hero" class="hero">
+    <div class="hero-content">
+      <h2 class="hero-title">Scan. Detect. <span class="gradient-text">Auto-Fix.</span></h2>
+      <p class="hero-subtitle">Enter a domain to scan for security vulnerabilities and apply remediation automatically</p>
+      <div class="scan-input-group">
+        <div class="input-wrapper">
+          <span class="input-icon">🌐</span>
+          <input type="text" id="target-input" placeholder="example.com" autocomplete="off">
+        </div>
+        <button id="btn-scan" class="btn-scan">
+          <span class="btn-scan-text">Scan Target</span>
+          <span class="btn-scan-icon">→</span>
+        </button>
+      </div>
+    </div>
+    <!-- Animated grid background -->
+    <div class="grid-bg"></div>
+  </section>
+
+  <!-- SCAN PROGRESS -->
+  <section id="scan-progress" class="section hidden">
+    <h3>Scanning...</h3>
+    <div id="scanner-grid" class="scanner-grid">
+      <!-- Scanner cards injected by JS -->
+    </div>
+  </section>
+
+  <!-- INFRASTRUCTURE DETECTION -->
+  <section id="infra-panel" class="section hidden">
+    <div class="glass-card infra-card">
+      <h3>🔍 Infrastructure Detected</h3>
+      <div id="infra-details" class="infra-grid">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </section>
+
+  <!-- FINDINGS -->
+  <section id="findings-section" class="section hidden">
+    <div class="findings-header">
+      <h3>Findings</h3>
+      <div class="findings-stats">
+        <span id="stat-critical" class="stat-badge critical">0 Critical</span>
+        <span id="stat-high" class="stat-badge high">0 High</span>
+        <span id="stat-moderate" class="stat-badge moderate">0 Moderate</span>
+        <span id="stat-pass" class="stat-badge pass">0 Pass</span>
+      </div>
+    </div>
+    <div id="findings-list" class="findings-list">
+      <!-- Finding cards injected by JS -->
+    </div>
+  </section>
+
+  <!-- REMEDIATION PANEL (slides in from right) -->
+  <div id="remediation-panel" class="remediation-panel hidden">
+    <div class="remediation-header">
+      <h3 id="remediation-title">Remediation</h3>
+      <button id="btn-close-remediation" class="btn-ghost">✕</button>
+    </div>
+    <div id="remediation-content" class="remediation-content">
+      <!-- Fix code, diff view, apply button -->
+    </div>
+  </div>
+
+  <!-- REPORT SECTION -->
+  <section id="report-section" class="section hidden">
+    <button id="btn-export" class="btn-primary">📄 Export Report</button>
+  </section>
+
+  <!-- SCRIPTS -->
+  <script src="/js/app.js"></script>
+  <script src="/js/scanner.js"></script>
+  <script src="/js/dashboard.js"></script>
+  <script src="/js/remediation.js"></script>
+  <script src="/js/report.js"></script>
+</body>
+</html>
