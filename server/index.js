@@ -35,6 +35,7 @@ let cfConnection = {
 // Route: Connect to Cloudflare API
 app.post('/api/connect', async (req, res) => {
   const { apiToken } = req.body;
+  console.log('[CONNECT] Received connect request, token length:', apiToken ? apiToken.length : 0);
   if (!apiToken) {
     return res.status(400).json({ error: 'API Token is required' });
   }
@@ -42,6 +43,7 @@ app.post('/api/connect', async (req, res) => {
   try {
     const connector = new cloudflareConnector(apiToken);
     const isValid = await connector.verifyToken();
+    console.log('[CONNECT] Token verification result:', isValid);
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid API Token' });
     }
@@ -50,10 +52,22 @@ app.post('/api/connect', async (req, res) => {
     cfConnection.token = apiToken;
     cfConnection.zoneMap.clear();
 
+    console.log('[CONNECT] SUCCESS — cfConnection.connected:', cfConnection.connected);
     return res.json({ success: true, message: 'Connected to Cloudflare successfully' });
   } catch (err) {
+    console.log('[CONNECT] ERROR:', err.message);
     return res.status(500).json({ error: `Connection failed: ${err.message}` });
   }
+});
+
+// Debug: Connection status check
+app.get('/api/status', (req, res) => {
+  res.json({
+    cloudflareConnected: cfConnection.connected,
+    hasToken: !!cfConnection.token,
+    cachedScans: scanCache.size,
+    cachedZones: cfConnection.zoneMap.size
+  });
 });
 
 // Route: Trigger scan
@@ -143,6 +157,7 @@ app.post('/api/remediate', async (req, res) => {
     return res.status(400).json({ error: 'No automatic fix available for this finding' });
   }
 
+  console.log('[REMEDIATE] cfConnection.connected:', cfConnection.connected, '| hasToken:', !!cfConnection.token);
   if (!cfConnection.connected || !cfConnection.token) {
     return res.status(400).json({ error: 'Cloudflare connection required to apply fixes.' });
   }
