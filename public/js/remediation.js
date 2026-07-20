@@ -45,6 +45,19 @@ window.remediation = (() => {
       s3: { notes: 'N/A — Amazon S3 does not expose build numbers.' },
       cloudflare: { notes: 'N/A — Cloudflare conceals internal build parameters.' }
     },
+    'software-fingerprint-ver': {
+      title: 'Verifiable Software Stacks / Outdated Versions Exposed',
+      apache: {
+        file: 'functions.php (WordPress)',
+        code: `remove_action('wp_head', 'wp_generator');`,
+        notes: 'Add this line to your WordPress theme\'s functions.php file to remove version generator tags.'
+      },
+      nginx: {
+        file: '/etc/nginx/nginx.conf',
+        code: `fastcgi_hide_header X-Powered-By;\nproxy_hide_header X-Powered-By;`,
+        notes: 'Prevents PHP or web framework versions from leaking in response headers.'
+      }
+    },
     'dmarc-missing': {
       title: 'DMARC Policy Not Enabled',
       all: {

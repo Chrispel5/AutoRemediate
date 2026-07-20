@@ -342,6 +342,56 @@ document.addEventListener('DOMContentLoaded', () => {
       description: 'The site encrypts web transit using valid TLS protocols.'
     });
 
+    findings.push({
+      id: 'subdomain-takeover',
+      name: 'Dangling CNAME Subdomain Takeover Risk',
+      severity: 'CRITICAL',
+      status: 'FAIL',
+      evidence: `dev.${domain} points to unclaimed CNAME: unclaimed-service.s3.amazonaws.com (NXDOMAIN)`,
+      description: 'One or more subdomains point via CNAME to a cloud service (e.g. AWS S3, Heroku) that is no longer active. An attacker can register that unclaimed name at the provider and hijack the subdomain.',
+      fix: { type: 'dns-delete', record: { type: 'CNAME', name: `dev.${domain}`, content: 'unclaimed-service.s3.amazonaws.com' } }
+    });
+
+    findings.push({
+      id: 'server-version-exposed',
+      name: 'Web Server Version Disclosed',
+      severity: 'HIGH',
+      status: 'FAIL',
+      evidence: 'Server: Apache/2.4.57 (Debian)',
+      description: 'Exposing specific server version numbers makes it easier for attackers to identify matches for known vulnerabilities (CVEs).',
+      fix: { type: 'config', notes: 'Apache configuration needs ServerTokens set to Prod' }
+    });
+
+    findings.push({
+      id: 'software-fingerprint-ver',
+      name: 'Outdated / Verifiable Software Stacks Exposed',
+      severity: 'HIGH',
+      status: 'FAIL',
+      evidence: 'Server Header: Apache/2.4.57 (Debian)\nMeta Generator: WordPress 6.4.3',
+      description: 'Metadata or headers disclose specific framework, language, or system version details. This eases targeted exploit searches.',
+      fix: { type: 'config', notes: 'WordPress theme functions.php needs generator tag removal action' }
+    });
+
+    findings.push({
+      id: 'cookie-insecure',
+      name: 'Cookie Configuration Missing Security Flags',
+      severity: 'MODERATE',
+      status: 'FAIL',
+      evidence: 'Set-Cookie: PHPSESSID=abc123xyz; path=/\nIssues: HttpOnly flag missing, Secure flag missing',
+      description: 'Cookies lacking HttpOnly are vulnerable to client-side script reading (XSS session hijacking). Cookies without Secure can be transmitted in plain text over unencrypted HTTP.',
+      fix: { type: 'config', notes: 'Set session cookies with Secure, HttpOnly, and SameSite=Strict attributes in backend configurations.' }
+    });
+
+    findings.push({
+      id: 'stale-txt-token',
+      name: 'Legacy DNS Verification Tokens Detected',
+      severity: 'LOW',
+      status: 'FAIL',
+      evidence: 'TXT record: google-site-verification=abcdef1234567890',
+      description: 'DNS zone contains old/legacy domain ownership verification strings. Leaving these in DNS maps out historic service providers and adds metadata clutter.',
+      fix: { type: 'dns-delete', record: { type: 'TXT', name: domain, content: 'google-site-verification=abcdef1234567890' } }
+    });
+
     return {
       scanId: 'scan_local_' + Date.now(),
       target: domain,

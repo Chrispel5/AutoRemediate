@@ -41,6 +41,19 @@ module.exports = {
     s3: { description: 'N/A — Amazon S3 does not disclose detailed operating system or server build numbers.', skip: true },
     cloudflare: { description: 'N/A — Cloudflare handles edge traffic hiding internal server structures.', skip: true }
   },
+  'software-fingerprint-ver': {
+    apache: {
+      description: 'Remove generator version tags from theme head.',
+      file: 'functions.php (WordPress)',
+      code: `remove_action('wp_head', 'wp_generator');`
+    },
+    nginx: {
+      description: 'Hide X-Powered-By header exposing versions in proxy block.',
+      file: '/etc/nginx/nginx.conf',
+      code: `fastcgi_hide_header X-Powered-By;\nproxy_hide_header X-Powered-By;`,
+      postAction: 'sudo systemctl restart nginx'
+    }
+  },
   'dmarc-missing': {
     all: {
       description: 'Publish DMARC record to prevent email spoofing attacks.',
