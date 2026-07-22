@@ -736,3 +736,146 @@ button {
   padding: 14px 32px;
   font-size: 16px;
 }
+
+/* Upgrade: Fix Readiness & Compliance Badges */
+.badge-readiness {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  display: inline-block;
+}
+.badge-readiness.auto_fixable {
+  background: rgba(46, 213, 115, 0.1);
+  color: var(--pass);
+  border-color: rgba(46, 213, 115, 0.2);
+}
+.badge-readiness.needs_input {
+  background: rgba(255, 165, 2, 0.1);
+  color: var(--moderate);
+  border-color: rgba(255, 165, 2, 0.2);
+}
+.badge-readiness.manual {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+.badge-readiness.generate_patch {
+  background: rgba(95, 156, 247, 0.1);
+  color: var(--low);
+  border-color: rgba(95, 156, 247, 0.2);
+}
+.badge-readiness.verified {
+  background: rgba(46, 213, 115, 0.2);
+  color: var(--pass);
+  border-color: var(--pass);
+}
+
+.badge-compliance {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 212, 255, 0.06);
+  color: var(--primary);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  font-family: var(--font-mono);
+  display: inline-block;
+}
+
+.compliance-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* Upgrade: Copilot Panel Styles */
+.copilot-section {
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.copilot-section strong {
+  color: var(--primary);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.copilot-section p, .copilot-section li {
+  font-size: 13px;
+  color: var(--text-main);
+  line-height: 1.4;
+}
+.copilot-list {
+  padding-left: 20px;
+  margin-top: 4px;
+}
+.copilot-list li {
+  margin-bottom: 4px;
+}
+
+/* Upgrade: Terraform Modal */
+.terraform-modal-content {
+  width: 600px !important;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  box-sizing: border-box;
+}
+.terraform-code-container {
+  position: relative;
+  width: 100%;
+}
+.terraform-code-container pre {
+  background: #090c15;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  padding-top: 36px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #a5b4fc;
+  height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  box-sizing: border-box;
+}
+.terraform-code-container code {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: block;
+}
+.terraform-provider-select {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  outline: none;
+  font-family: var(--font-sans);
+}
+.terraform-provider-select option {
+  background: #0d1222;
+  color: #fff;
+}
+
+/* Disabled & Coming Soon Action buttons */
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

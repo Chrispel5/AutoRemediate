@@ -5,8 +5,9 @@ async function applyFix(connector, domain, finding) {
   try {
     // 1. List distributions to find the one matching the target domain
     const distributions = await connector.listDistributions();
+    const targetDomain = domain.toLowerCase();
     const targetDist = distributions.find(d => {
-      return d.domainName === domain || d.aliases.includes(domain);
+      return d.domainName.toLowerCase() === targetDomain || d.aliases.includes(targetDomain);
     });
 
     if (!targetDist) {
@@ -54,7 +55,9 @@ async function applyFix(connector, domain, finding) {
       dcbContent = dcbContent.replace(/<ResponseHeadersPolicyId>[^<]*<\/ResponseHeadersPolicyId>/, `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>`);
     } else {
       // Append right before ViewerProtocolPolicy or at the end of DefaultCacheBehavior content
-      if (dcbContent.includes('<ViewerProtocolPolicy>')) {
+      if (dcbContent.includes('<Compress>')) {
+        dcbContent = dcbContent.replace('<Compress>', `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>\n<Compress>`);
+      } else if (dcbContent.includes('<ViewerProtocolPolicy>')) {
         dcbContent = dcbContent.replace('<ViewerProtocolPolicy>', `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>\n<ViewerProtocolPolicy>`);
       } else {
         dcbContent += `\n<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>`;

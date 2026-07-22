@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const { normalizeDomain, isRecordNameAllowed } = require('./utils/domain');
+const { createRateLimiter } = require('./utils/rateLimit');
 
 // Import Scanners
 const dnsAuditor = require('./scanners/dnsAuditor');
@@ -21,12 +23,24 @@ const AWSConnector = require('./connectors/awsConnector');
 const cloudfrontRemediator = require('./remediators/cloudfrontRemediator');
 const route53Remediator = require('./remediators/route53Remediator');
 
+// Upgrade Templates & Exporters
+const { applyCompliance } = require('./templates/compliance');
+const { applyRemediationMetadata } = require('./templates/remediation');
+const { generateTerraform } = require('./templates/terraform');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
+
+const apiLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 30
+});
+
+app.use('/api', apiLimiter);
 
 // In-memory databases
 const scanCache = new Map();
@@ -114,13 +128,13 @@ app.post('/api/connect-aws', async (req, res) => {
 // Route: Trigger scan
 app.post('/api/scan', async (req, res) => {
   const { target } = req.body;
-  if (!target) {
-    return res.status(400).json({ error: 'Target domain is required' });
-  }
 
-  // Normalize target domain
-  let domain = target.trim().toLowerCase();
-  domain = domain.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0];
+  let domain;
+  try {
+    domain = normalizeDomain(target);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const scanId = 'scan_' + Date.now();
   const startTime = new Date();
@@ -161,18 +175,58 @@ app.post('/api/scan', async (req, res) => {
       }
     });
 
+    const enriched = applyRemediationMetadata(applyCompliance(findings), domain);
+
     const scanResult = {
       scanId,
       target: domain,
       scanTime: startTime.toISOString(),
       infraType,
-      findings
+      findings: enriched
     };
 
     scanCache.set(scanId, scanResult);
     return res.json(scanResult);
   } catch (err) {
     return res.status(500).json({ error: `Scan execution failed: ${err.message}` });
+  }
+});
+
+// Route: Export Terraform configuration
+app.post('/api/terraform/export', (req, res) => {
+  const { scanId, findingId, provider } = req.body;
+  if (!scanId || !findingId || !provider) {
+    return res.status(400).json({ error: 'scanId, findingId, and provider are required' });
+  }
+
+  if (provider !== 'cloudflare' && provider !== 'aws') {
+    return res.status(400).json({ error: "Unsupported provider. Choose 'cloudflare' or 'aws'." });
+  }
+
+  const scan = scanCache.get(scanId);
+  if (!scan) {
+    return res.status(404).json({ error: 'Scan session not found' });
+  }
+
+  const finding = scan.findings.find(f => f.id === findingId);
+  if (!finding) {
+    return res.status(404).json({ error: 'Finding not found in this scan session' });
+  }
+
+  if (!finding.fix) {
+    return res.status(400).json({ error: 'No Terraform export available for this finding.' });
+  }
+
+  try {
+    const tfCode = generateTerraform(finding, scan.target, provider);
+    const filename = `autoremediate-${finding.id}-${provider}.tf`;
+    return res.json({
+      success: true,
+      filename,
+      terraform: tfCode
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
 });
 
@@ -196,6 +250,10 @@ app.post('/api/remediate', async (req, res) => {
   const finding = scan.findings[findingIndex];
   if (!finding.fix) {
     return res.status(400).json({ error: 'No automatic fix available for this finding' });
+  }
+
+  if (finding.fix.record && !isRecordNameAllowed(finding.fix.record.name, scan.target)) {
+    return res.status(400).json({ error: 'Refusing to remediate DNS records outside the scanned domain.' });
   }
 
   console.log('[REMEDIATE] cfConnected:', cfConnection.connected, '| awsConnected:', awsConnection.connected);
@@ -391,6 +449,8 @@ app.get('/api/demo', (req, res) => {
       }
     ]
   };
+
+  demoData.findings = applyRemediationMetadata(applyCompliance(demoData.findings), demoData.target);
 
   scanCache.set(scanId, demoData);
   return res.json(demoData);

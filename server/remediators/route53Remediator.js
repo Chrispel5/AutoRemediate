@@ -7,7 +7,8 @@ async function applyFix(connector, domain, finding) {
   try {
     // 1. List hosted zones to locate the one matching the target domain
     const zones = await connector.listHostedZones();
-    const targetZone = zones.find(z => domain.endsWith(z.name) || z.name === domain);
+    const sortedZones = [...zones].sort((a, b) => b.name.length - a.name.length);
+    const targetZone = sortedZones.find(z => domain === z.name || domain.endsWith(`.${z.name}`));
 
     if (!targetZone) {
       throw new Error(`Route 53 hosted zone not found for domain: ${domain}`);

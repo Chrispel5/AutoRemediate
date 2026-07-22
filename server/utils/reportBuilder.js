@@ -36,13 +36,29 @@ function generateReport(scan) {
       ? `<div class="remediation-proof"><strong>Auto-Fixed:</strong> ${f.remediationDetails.verification}</div>`
       : '';
 
+    let readinessBadge = '';
+    if (f.remediation) {
+      readinessBadge = `<div style="margin-top:4px;"><span class="readiness-tag ${f.remediation.readiness}">${f.remediation.label}</span></div>`;
+    }
+
+    let complianceBadges = '';
+    if (f.compliance && f.compliance.length > 0) {
+      complianceBadges = `<div class="report-compliance-container">` + 
+        f.compliance.map(c => `<span class="report-compliance-badge">${c.framework}: ${c.control}</span>`).join(' ') + 
+        `</div>`;
+    }
+
     return `
       <tr class="finding-row ${severityClass}">
-        <td><span class="severity-tag ${severityClass}">${f.status === 'PASS' ? 'PASS' : f.severity}</span></td>
+        <td>
+          <span class="severity-tag ${severityClass}">${f.status === 'PASS' ? 'PASS' : f.severity}</span>
+          ${readinessBadge}
+        </td>
         <td>
           <div class="finding-name">${f.name}</div>
           <div class="finding-desc">${f.description || ''}</div>
           ${remediationText}
+          ${complianceBadges}
         </td>
         <td>
           <pre class="evidence-block"><code>${escapeHtml(f.evidence)}</code></pre>
@@ -202,6 +218,60 @@ function generateReport(scan) {
           border-radius: 0 4px 4px 0;
           font-size: 12px;
           color: #a8e6cf;
+        }
+
+        .readiness-tag {
+          font-size: 9px;
+          font-weight: 800;
+          padding: 2px 4px;
+          border-radius: 4px;
+          text-transform: uppercase;
+          border: 1px solid transparent;
+          margin-top: 4px;
+          display: inline-block;
+        }
+        .readiness-tag.auto_fixable {
+          background: rgba(46, 213, 115, 0.1);
+          color: #2ed573;
+          border-color: rgba(46, 213, 115, 0.2);
+        }
+        .readiness-tag.needs_input {
+          background: rgba(255, 165, 2, 0.1);
+          color: #ffa502;
+          border-color: rgba(255, 165, 2, 0.2);
+        }
+        .readiness-tag.manual {
+          background: rgba(255, 255, 255, 0.05);
+          color: #94a3b8;
+          border-color: rgba(255, 255, 255, 0.08);
+        }
+        .readiness-tag.generate_patch {
+          background: rgba(95, 156, 247, 0.1);
+          color: #5f9cf7;
+          border-color: rgba(95, 156, 247, 0.2);
+        }
+        .readiness-tag.verified {
+          background: rgba(46, 213, 115, 0.2);
+          color: #2ed573;
+          border-color: #2ed573;
+        }
+
+        .report-compliance-container {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-top: 8px;
+        }
+        .report-compliance-badge {
+          font-size: 9px;
+          font-weight: 600;
+          padding: 2px 6px;
+          border-radius: 4px;
+          background: rgba(0, 212, 255, 0.06);
+          color: #00d4ff;
+          border: 1px solid rgba(0, 212, 255, 0.15);
+          font-family: monospace;
+          display: inline-block;
         }
         
         .print-btn {

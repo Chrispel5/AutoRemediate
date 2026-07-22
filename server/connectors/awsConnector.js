@@ -13,8 +13,12 @@ class AWSConnector {
     const datetime = new Date().toISOString().replace(/[:\-]|\.\d{3}/g, '');
     const date = datetime.substr(0, 8);
 
-    headers['host'] = host;
-    headers['x-amz-date'] = datetime;
+    const signingHeaders = {};
+    Object.keys(headers).forEach((key) => {
+      signingHeaders[key.toLowerCase()] = headers[key];
+    });
+    signingHeaders.host = host;
+    signingHeaders['x-amz-date'] = datetime;
 
     // 1. Create Canonical Request
     const canonicalUri = path || '/';
@@ -26,13 +30,12 @@ class AWSConnector {
       .join('&');
 
     // Canonical Headers
-    const canonicalHeaders = Object.keys(headers)
+    const canonicalHeaders = Object.keys(signingHeaders)
       .sort()
-      .map(key => `${key.toLowerCase()}:${headers[key].toString().trim()}`)
+      .map(key => `${key}:${signingHeaders[key].toString().trim().replace(/\s+/g, ' ')}`)
       .join('\n') + '\n';
 
-    const signedHeaders = Object.keys(headers)
-      .map(key => key.toLowerCase())
+    const signedHeaders = Object.keys(signingHeaders)
       .sort()
       .join(';');
 
@@ -61,9 +64,9 @@ class AWSConnector {
     const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
 
     // 4. Add Authorization Header
-    headers['Authorization'] = `${algorithm} Credential=${this.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+    signingHeaders.Authorization = `${algorithm} Credential=${this.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
-    return headers;
+    return signingHeaders;
   }
 
   async request(service, host, method, path, queryParams = {}, additionalHeaders = {}, body = '') {
@@ -137,7 +140,9 @@ class AWSConnector {
     
     // Build change batch XML payload
     // XML value escaping
-    const escapedValue = recordValue.startsWith('"') ? recordValue : `"${recordValue}"`;
+    const escapedName = escapeXml(recordName.endsWith('.') ? recordName : `${recordName}.`);
+    const escapedType = escapeXml(recordType);
+    const escapedValue = escapeXml(recordValue.startsWith('"') ? recordValue : `"${recordValue}"`);
     const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
 <ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
   <ChangeBatch>
@@ -145,8 +150,8 @@ class AWSConnector {
       <Change>
         <Action>${action}</Action>
         <ResourceRecordSet>
-          <Name>${recordName}</Name>
-          <Type>${recordType}</Type>
+          <Name>${escapedName}</Name>
+          <Type>${escapedType}</Type>
           <TTL>${ttl}</TTL>
           <ResourceRecords>
             <ResourceRecord>
@@ -231,7 +236,7 @@ class AWSConnector {
     if (headersConfig.ContentSecurityPolicy) {
       securityHeadersXml += `<ContentSecurityPolicy>
         <Override>true</Override>
-        <ContentSecurityPolicy>${headersConfig.ContentSecurityPolicy}</ContentSecurityPolicy>
+        <ContentSecurityPolicy>${escapeXml(headersConfig.ContentSecurityPolicy)}</ContentSecurityPolicy>
       </ContentSecurityPolicy>`;
     }
     if (headersConfig.StrictTransportSecurity) {
@@ -296,6 +301,15 @@ class AWSConnector {
       updatedConfigXml
     );
   }
+}
+
+function escapeXml(value) {
+  return value.toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 module.exports = AWSConnector;

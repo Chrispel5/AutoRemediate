@@ -14,10 +14,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnExport = document.getElementById('btn-export');
 
   let currentScanData = null;
-  let isCloudflareConnected = false;
+  window.connectedProviders = window.connectedProviders || {
+    cloudflare: false,
+    aws: false
+  };
 
   // Set default targets
-  targetInput.value = 'cecureintel.com';
+  targetInput.value = '';
 
   // Toggle Settings Modal
   btnSettings.addEventListener('click', () => {
@@ -48,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const data = await response.json();
       if (response.ok && data.success) {
-        isCloudflareConnected = true;
+        window.connectedProviders.cloudflare = true;
         cloudflareStatus.textContent = 'Cloudflare: Connected';
         cloudflareStatus.classList.remove('disconnected');
         cloudflareStatus.classList.add('connected');
@@ -65,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       // Fallback for static demo mode without backend
-      isCloudflareConnected = true;
+      window.connectedProviders.cloudflare = true;
       cloudflareStatus.textContent = 'Cloudflare: Connected (Demo)';
       cloudflareStatus.classList.remove('disconnected');
       cloudflareStatus.classList.add('connected');
@@ -110,7 +113,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const data = await response.json();
       if (response.ok && data.success) {
-        window.isCloudflareConnected = true; // reuse same flag for "any provider connected"
+        window.connectedProviders.aws = true;
+        window.isCloudflareConnected = true;
         awsStatus.textContent = 'AWS: Connected';
         awsStatus.classList.remove('disconnected');
         awsStatus.classList.add('connected');
@@ -124,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       // Fallback for static demo mode
+      window.connectedProviders.aws = true;
       window.isCloudflareConnected = true;
       awsStatus.textContent = 'AWS: Connected (Demo)';
       awsStatus.classList.remove('disconnected');
@@ -257,13 +262,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- CLIENT-SIDE CLOUDFLARE DNS-OVER-HTTPS SCANNER FALLBACK ---
   async function runClientSideScan(target) {
-    const domain = target.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0];
+    const domain = normalizeDomain(target);
     const findings = [];
     
     // Resolve DNS records via Cloudflare DoH API
     const fetchDns = async (name, type) => {
       try {
-        const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${name}&type=${type}`, {
+        const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`, {
           headers: { 'Accept': 'application/dns-json' }
         });
         const data = await res.json();
@@ -610,6 +615,30 @@ document.addEventListener('DOMContentLoaded', () => {
       infraType: detectedInfra,
       findings
     };
+  }
+
+  function normalizeDomain(input) {
+    let domain = input.trim().toLowerCase();
+    domain = domain.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+    domain = domain.split(/[/?#]/)[0].replace(/\.$/, '');
+    if (domain.includes('@')) {
+      throw new Error('Enter a domain name without credentials or user info');
+    }
+    domain = domain.split(':')[0];
+    if (domain.startsWith('www.')) {
+      domain = domain.slice(4);
+    }
+
+    const labels = domain.split('.');
+    const valid = domain.length <= 253
+      && labels.length >= 2
+      && labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+
+    if (!valid) {
+      throw new Error('Enter a valid domain name, for example example.com');
+    }
+
+    return domain;
   }
 
 
