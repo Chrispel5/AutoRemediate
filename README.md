@@ -5,6 +5,7 @@ AutoRemediate is a web security scanner with controlled remediation paths for Cl
 ## Contents
 
 - [Purpose and safe use](#purpose-and-safe-use)
+- [Ethical use and legal disclaimer](#ethical-use-and-legal-disclaimer)
 - [What the application does](#what-the-application-does)
 - [How a scan runs](#how-a-scan-runs)
 - [Screen layout](#screen-layout)
@@ -19,12 +20,24 @@ AutoRemediate is a web security scanner with controlled remediation paths for Cl
 - [API reference](#api-reference)
 - [Security controls and limits](#security-controls-and-limits)
 - [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ## Purpose and safe use
 
 Use AutoRemediate only on domains and cloud environments for which you have written permission. A scan sends DNS queries and HTTPS requests to the target. Some checks also request an invalid route and a malformed query value to see whether internal error details are exposed.
 
 Do not run automatic changes until the target owner has approved the exact change. Start in a non-production environment where possible. Keep a rollback path before changing DNS or response headers.
+
+## Ethical use and legal disclaimer
+
+> [!WARNING]
+> **LEGAL NOTICE & LIMITATION OF LIABILITY**
+> 
+> AutoRemediate is an educational, research, and defensive security auditing framework designed strictly for authorized penetration testing, vulnerability management, and infrastructure hardening. 
+>
+> 1. **Authorized Scanning Only:** Scanning, probing, or modifying web infrastructure without explicit, prior written authorization from the system asset owner is illegal and may violate national and international computer crime laws (e.g., Computer Fraud and Abuse Act - CFAA, UK Computer Misuse Act, and GDPR).
+> 2. **No Liability:** The primary author(s) and project contributors assume **NO RESPONSIBILITY or LIABILITY** for any misuse, unauthorized activity, service disruption, data loss, or unlawful conduct carried out using this tool. 
+> 3. **Operator Responsibility:** Users are solely responsible for ensuring their actions comply with all applicable local, state, federal, and international laws before executing any security checks or automated remediation rules.
 
 ## What the application does
 
@@ -501,3 +514,7 @@ When opened from a file URL or a GitHub Pages URL, the dashboard falls back to b
 - Keep scanner changes narrow and add a safe local fixture before changing detection logic.
 - Keep remediation modules provider-specific. Do not place provider write code in the browser.
 - Review every generated Terraform file and every provider change before use.
+
+## License
+
+This project is licensed under the terms of the [MIT License](file:///c:/Users/Ekundayo/Downloads/AntiAI/AutoRemediate/LICENSE). Feel free to use, modify, and distribute this software in accordance with the license conditions.
