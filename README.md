@@ -33,10 +33,10 @@ Do not run automatic changes until the target owner has approved the exact chang
 > [!WARNING]
 > **LEGAL NOTICE & LIMITATION OF LIABILITY**
 > 
-> AutoRemediate is an educational, research, and defensive security auditing framework designed strictly for authorized penetration testing, vulnerability management, and infrastructure hardening. 
+> AutoRemediate is an educational, research, and defence security auditing framework designed strictly for authorised penetration testing, vulnerability management, and infrastructure hardening. 
 >
-> 1. **Authorized Scanning Only:** Scanning, probing, or modifying web infrastructure without explicit, prior written authorization from the system asset owner is illegal and may violate national and international computer crime laws (e.g., Computer Fraud and Abuse Act - CFAA, UK Computer Misuse Act, and GDPR).
-> 2. **No Liability:** The primary author(s) and project contributors assume **NO RESPONSIBILITY or LIABILITY** for any misuse, unauthorized activity, service disruption, data loss, or unlawful conduct carried out using this tool. 
+> 1. **Authorised Scanning Only:** Scanning, probing, or modifying web infrastructure without explicit, prior written authorisation from the system asset owner is illegal and may violate national and international computer crime laws (e.g., Computer Fraud and Abuse Act - CFAA, UK Computer Misuse Act, and GDPR).
+> 2. **No Liability:** The primary author(s) and project contributors assume **NO RESPONSIBILITY or LIABILITY** for any misuse, unauthorised activity, service disruption, data loss, or unlawful conduct carried out using this tool. 
 > 3. **Operator Responsibility:** Users are solely responsible for ensuring their actions comply with all applicable local, state, federal, and international laws before executing any security checks or automated remediation rules.
 
 ## What the application does
@@ -48,7 +48,7 @@ AutoRemediate has four parts:
 3. Scanner modules in `server/scanners/`.
 4. Connector and remediation modules in `server/connectors/` and `server/remediators/`.
 
-The dashboard accepts a domain. The server normalizes the domain, runs the scanner modules at the same time, stores the scan in memory, and returns the results to the browser. The dashboard sorts the findings, shows the supporting evidence, and opens the right action for each finding.
+The dashboard accepts a domain. The server normalises the domain, runs the scanner modules at the same time, stores the scan in memory, and returns the results to the browser. The dashboard sorts the findings, shows the supporting evidence, and opens the right action for each finding.
 
 Some findings can be changed through a connected cloud provider. Other findings receive a configuration note or a Terraform file. Server-side changes such as cookie settings, application error handling, and software-version disclosure are not changed automatically by the current code.
 
@@ -278,7 +278,7 @@ Keep CloudFront and Route 53 access separate if the application does not need bo
 
 ### Run a scan
 
-1. Enter a domain without a path. `example.com`, `https://example.com`, and `www.example.com` all normalize to `example.com`.
+1. Enter a domain without a path. `example.com`, `https://example.com`, and `www.example.com` all normalise to `example.com`.
 2. Select **Scan Target**.
 3. Wait for the scan grid to complete.
 4. Review the infrastructure panel and findings cards.
@@ -472,7 +472,7 @@ curl -X POST http://localhost:3000/api/scan \
 
 ### Controls present in the current code
 
-- Target normalization rejects malformed domains, IP addresses, and user information in URLs.
+- Target normalisation rejects malformed domains, IP addresses, and user information in URLs.
 - The DNS remediation route blocks record names outside the scanned domain.
 - Cloudflare tokens and AWS connection values are held only in process memory.
 - The API has a small per-client rate limit.
@@ -480,7 +480,7 @@ curl -X POST http://localhost:3000/api/scan \
 
 ### Controls required before a shared or production deployment
 
-- Add user authentication and server-side authorization to every route.
+- Add user authentication and server-side authorisation to every route.
 - Replace open CORS with an allowlist of approved origins.
 - Replace browser-supplied provider credentials with short-lived service credentials.
 - Add a server-side approval step for every write action. A browser confirmation is not access control.
