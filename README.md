@@ -6,6 +6,12 @@ AutoRemediate is an automated web security scanner and remediation engine design
 
 ---
 
+## Purpose and Research Scope
+
+AutoRemediate is developed strictly for research, educational security auditing, authorized vulnerability management, and infrastructure hardening. It provides cloud engineers and security researchers with a controlled framework to evaluate edge security posture, audit DNS and HTTP response headers, and validate automated remediation workflows in authorized environments.
+
+---
+
 ## Key Features
 
 - **Dual-Cloud Remediation**: Supports automated fixes for Cloudflare Transform Rulesets, Amazon CloudFront Response Headers Policies, and Route 53 DNS records.
