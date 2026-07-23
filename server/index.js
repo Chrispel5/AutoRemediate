@@ -254,7 +254,7 @@ app.post('/api/terraform/export', (req, res) => {
 
 // Route: Apply remediation fix
 app.post('/api/remediate', async (req, res) => {
-  const { scanId, findingId } = req.body;
+  const { scanId, findingId, provider } = req.body;
   if (!scanId || !findingId) {
     return res.status(400).json({ error: 'scanId and findingId are required' });
   }
@@ -278,16 +278,17 @@ app.post('/api/remediate', async (req, res) => {
     return res.status(400).json({ error: 'Refusing to remediate DNS records outside the scanned domain.' });
   }
 
-  console.log('[REMEDIATE] cfConnected:', cfConnection.connected, '| awsConnected:', awsConnection.connected);
+  console.log('[REMEDIATE] cfConnected:', cfConnection.connected, '| awsConnected:', awsConnection.connected, '| requestedProvider:', provider);
   if ((!cfConnection.connected || !cfConnection.token) && (!awsConnection.connected || !awsConnection.accessKeyId)) {
     return res.status(400).json({ error: 'Cloud provider connection required to apply fixes. Connect Cloudflare or AWS.' });
   }
 
   try {
     let remediationResult;
+    const targetProvider = provider || (awsConnection.connected && !cfConnection.connected ? 'aws' : 'cloudflare');
 
     if (finding.fix.type === 'dns' || finding.fix.type === 'dns-update' || finding.fix.type === 'dns-delete') {
-      if (cfConnection.connected) {
+      if ((targetProvider === 'cloudflare' || targetProvider === 'both') && cfConnection.connected) {
         const connector = new cloudflareConnector(cfConnection.token);
         let zoneId = cfConnection.zoneMap.get(scan.target);
         if (!zoneId) {
@@ -295,12 +296,19 @@ app.post('/api/remediate', async (req, res) => {
           cfConnection.zoneMap.set(scan.target, zoneId);
         }
         remediationResult = await dnsRemediator.applyFix(connector, zoneId, scan.target, finding);
-      } else if (awsConnection.connected) {
+      }
+      
+      if ((targetProvider === 'aws' || targetProvider === 'both' || !remediationResult) && awsConnection.connected) {
         const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region, awsConnection.sessionToken);
-        remediationResult = await route53Remediator.applyFix(awsConn, scan.target, finding);
+        const awsResult = await route53Remediator.applyFix(awsConn, scan.target, finding);
+        if (remediationResult && awsResult.success) {
+          remediationResult.verification += ` | AWS Route 53 DNS record updated.`;
+        } else {
+          remediationResult = awsResult;
+        }
       }
     } else if (finding.fix.type === 'cloudflare-rule') {
-      if (cfConnection.connected) {
+      if ((targetProvider === 'cloudflare' || targetProvider === 'both') && cfConnection.connected) {
         const connector = new cloudflareConnector(cfConnection.token);
         let zoneId = cfConnection.zoneMap.get(scan.target);
         if (!zoneId) {
@@ -308,9 +316,16 @@ app.post('/api/remediate', async (req, res) => {
           cfConnection.zoneMap.set(scan.target, zoneId);
         }
         remediationResult = await headerRemediator.applyFix(connector, zoneId, scan.target, finding);
-      } else if (awsConnection.connected) {
+      }
+
+      if ((targetProvider === 'aws' || targetProvider === 'both' || !remediationResult) && awsConnection.connected) {
         const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region, awsConnection.sessionToken);
-        remediationResult = await cloudfrontRemediator.applyFix(awsConn, scan.target, finding);
+        const awsResult = await cloudfrontRemediator.applyFix(awsConn, scan.target, finding);
+        if (remediationResult && awsResult.success) {
+          remediationResult.verification += ` | ${awsResult.verification}`;
+        } else {
+          remediationResult = awsResult;
+        }
       }
     } else {
       return res.status(400).json({ error: `Fix type '${finding.fix.type}' is not auto-remediable.` });
