@@ -89,6 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const awsRoleArnInput = document.getElementById('aws-role-arn');
   const awsAccessKeyInput = document.getElementById('aws-access-key');
   const awsSecretKeyInput = document.getElementById('aws-secret-key');
+  const awsSessionTokenInput = document.getElementById('aws-session-token');
   const awsRegionInput = document.getElementById('aws-region');
   const awsStatus = document.getElementById('aws-status');
 
@@ -96,6 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const roleArn = awsRoleArnInput ? awsRoleArnInput.value.trim() : '';
     const accessKeyId = awsAccessKeyInput ? awsAccessKeyInput.value.trim() : '';
     const secretAccessKey = awsSecretKeyInput ? awsSecretKeyInput.value.trim() : '';
+    const sessionToken = awsSessionTokenInput ? awsSessionTokenInput.value.trim() : '';
     const region = awsRegionInput ? awsRegionInput.value.trim() || 'us-east-1' : 'us-east-1';
     
     if (!roleArn && (!accessKeyId || !secretAccessKey)) {
@@ -110,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await fetch('/api/connect-aws', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roleArn, accessKeyId, secretAccessKey, region })
+        body: JSON.stringify({ roleArn, accessKeyId, secretAccessKey, sessionToken, region })
       });
 
       const data = await response.json();
@@ -129,16 +131,20 @@ document.addEventListener('DOMContentLoaded', () => {
         alert(`AWS Connection Failed: ${data.error}`);
       }
     } catch (err) {
-      // Fallback for static demo mode
-      window.connectedProviders.aws = true;
-      window.isCloudflareConnected = true;
-      awsStatus.textContent = roleArn ? 'AWS: Connected (Role Demo)' : 'AWS: Connected (Demo)';
-      awsStatus.classList.remove('disconnected');
-      awsStatus.classList.add('connected');
-      settingsModal.classList.add('hidden');
-      alert('Connected (Local Simulation mode active).');
-      if (currentScanData) {
-        window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
+      const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+      if (isStaticEnv) {
+        window.connectedProviders.aws = true;
+        window.isCloudflareConnected = true;
+        awsStatus.textContent = roleArn ? 'AWS: Connected (Role Demo)' : 'AWS: Connected (Demo)';
+        awsStatus.classList.remove('disconnected');
+        awsStatus.classList.add('connected');
+        settingsModal.classList.add('hidden');
+        alert('Connected (Local Simulation mode active).');
+        if (currentScanData) {
+          window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
+        }
+      } else {
+        alert(`AWS Connection Error: ${err.message}`);
       }
     } finally {
       btnConnectAws.disabled = false;

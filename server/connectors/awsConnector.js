@@ -94,7 +94,8 @@ class AWSConnector {
 
     const text = await res.text();
     if (!res.ok) {
-      throw new Error(`AWS request failed: Status ${res.status}. Body: ${text}`);
+      const parsedError = parseAwsError(text, res.status);
+      throw new Error(parsedError);
     }
     return text;
   }
@@ -333,6 +334,31 @@ class AWSConnector {
       updatedConfigXml
     );
   }
+}
+
+function parseAwsError(text, status) {
+  if (!text) return `AWS HTTP ${status} error (empty response)`;
+  
+  const codeMatch = text.match(/<Code>([^<]+)<\/Code>/);
+  const msgMatch = text.match(/<Message>([^<]+)<\/Message>/);
+
+  const code = codeMatch ? codeMatch[1].trim() : `HTTP_${status}`;
+  const message = msgMatch ? msgMatch[1].trim() : (text.length < 250 ? text : `AWS API returned status ${status}`);
+
+  if (code === 'InvalidClientTokenId' || code === 'UnrecognizedClientException') {
+    return `Invalid AWS Access Key or Security Token (${code}): The credentials provided were not recognized by AWS. Please verify your Access Key ID and Secret Access Key.`;
+  }
+  if (code === 'AccessDenied' || code === 'AccessDeniedException') {
+    return `Access Denied (${code}): Your AWS identity does not have permission to assume this role or perform this operation. Check your IAM policy / Trust Policy.`;
+  }
+  if (code === 'SignatureDoesNotMatch') {
+    return `Invalid Secret Access Key (${code}): The AWS Secret Access Key provided does not match your Access Key ID.`;
+  }
+  if (code === 'ExpiredToken' || code === 'ExpiredTokenException') {
+    return `Session Token Expired (${code}): The temporary AWS session token has expired. Please refresh your session credentials.`;
+  }
+
+  return `AWS API Error [${code}]: ${message}`;
 }
 
 function escapeXml(value) {

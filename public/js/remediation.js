@@ -633,7 +633,7 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
           const badge = findingCard.querySelector('.severity-badge');
           if (badge) { badge.className = 'severity-badge pass'; badge.textContent = 'PASS'; }
           const actions = findingCard.querySelector('.finding-actions');
-          if (actions) { actions.innerHTML = '<span style="color:var(--pass);font-weight:700;">✅ Fixed</span>'; }
+          if (actions) { actions.innerHTML = '<span style="color:var(--pass);font-weight:700;">Fixed</span>'; }
         }
       }
       closeCopilot();
@@ -660,7 +660,7 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
             const badge = findingCard.querySelector('.severity-badge');
             if (badge) { badge.className = 'severity-badge pass'; badge.textContent = 'PASS'; }
             const actions = findingCard.querySelector('.finding-actions');
-            if (actions) { actions.innerHTML = '<span style="color:var(--pass);font-weight:700;">✅ Fixed</span>'; }
+            if (actions) { actions.innerHTML = '<span style="color:var(--pass);font-weight:700;">Fixed</span>'; }
           }
         }
         closeCopilot();

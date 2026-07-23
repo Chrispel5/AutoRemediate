@@ -1,4 +1,6 @@
-const dns = require('dns').promises;
+const { Resolver } = require('dns').promises;
+const customResolver = new Resolver();
+customResolver.setServers(['1.1.1.1', '8.8.8.8']);
 
 // Retry wrapper to prevent false negatives from DNS timeouts
 async function dnsRetry(fn, retries = 2) {
@@ -14,7 +16,7 @@ async function dnsRetry(fn, retries = 2) {
 
 async function checkSPF(domain) {
   try {
-    const records = await dnsRetry(() => dns.resolveTxt(domain));
+    const records = await dnsRetry(() => customResolver.resolveTxt(domain));
     const spfRecord = records.flat().find(r => r.startsWith('v=spf1'));
     
     if (!spfRecord) {
@@ -88,7 +90,7 @@ async function checkSPF(domain) {
 
 async function checkDMARC(domain) {
   try {
-    const records = await dnsRetry(() => dns.resolveTxt(`_dmarc.${domain}`));
+    const records = await dnsRetry(() => customResolver.resolveTxt(`_dmarc.${domain}`));
     const dmarcRecord = records.flat().find(r => r.startsWith('v=DMARC1'));
     
     if (!dmarcRecord) {
@@ -147,7 +149,7 @@ async function checkDMARC(domain) {
 
 async function checkMX(domain) {
   try {
-    const records = await dnsRetry(() => dns.resolveMx(domain));
+    const records = await dnsRetry(() => customResolver.resolveMx(domain));
     if (!records || records.length === 0) {
       return {
         id: 'mx-missing',
@@ -187,7 +189,7 @@ async function checkDKIM(domain) {
 
   for (const selector of selectors) {
     try {
-      const records = await dnsRetry(() => dns.resolveTxt(`${selector}._domainkey.${domain}`));
+      const records = await dnsRetry(() => customResolver.resolveTxt(`${selector}._domainkey.${domain}`));
       const dkim = records.flat().find(r => r.includes('v=DKIM1') || r.includes('k=rsa'));
       if (dkim) {
         dkimFindings.push(`${selector}: ${dkim}`);
@@ -220,7 +222,7 @@ async function checkDKIM(domain) {
 
 async function checkStaleTXT(domain) {
   try {
-    const records = await dnsRetry(() => dns.resolveTxt(domain));
+    const records = await dnsRetry(() => customResolver.resolveTxt(domain));
     const flatRecords = records.flat();
     const staleTokens = [];
 

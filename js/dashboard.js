@@ -96,12 +96,14 @@ window.dashboard = (() => {
   };
 
   function getFallbackRemediation(finding) {
+    const isTerraformable = ['csp-missing', 'csp', 'hsts-missing', 'hsts', 'xframe-missing', 'xframe-present', 'xcto-missing', 'xcto-present', 'spf-missing', 'spf-softfail', 'spf', 'dmarc-missing', 'dmarc-none', 'dmarc', 'subdomain-takeover', 'subdomain-takeover-clean', 'stale-txt-token', 'stale-txt'].includes(finding.id) || !!finding.fix;
+
     if (finding.status === "PASS") {
       return {
         readiness: "verified",
         label: "Verified",
         canAutoFix: false,
-        canExportTerraform: false
+        canExportTerraform: isTerraformable
       };
     }
     if (finding.id === "dkim-missing") {
@@ -214,10 +216,6 @@ window.dashboard = (() => {
           actionButtons += ` <button class="btn-action btn-fix" onclick="window.remediation.apply('${scanId}', '${finding.id}')">Auto-Fix</button>`;
         }
         
-        if (finding.remediation.canExportTerraform) {
-          actionButtons += ` <button class="btn-action btn-view-fix" onclick="window.remediation.exportTerraform('${finding.id}')">Export Terraform</button>`;
-        }
-        
         if (finding.remediation.readiness === 'needs_input') {
           actionButtons += ` <button class="btn-action btn-view-fix" disabled title="Coming soon">Provide Details</button>`;
         }
@@ -225,6 +223,10 @@ window.dashboard = (() => {
         if (finding.remediation.readiness === 'generate_patch') {
           actionButtons += ` <button class="btn-action btn-view-fix" disabled title="Coming soon">Generate Patch</button>`;
         }
+      }
+
+      if (finding.remediation.canExportTerraform) {
+        actionButtons += ` <button class="btn-action btn-view-fix" onclick="window.remediation.exportTerraform('${finding.id}')">Export Terraform</button>`;
       }
 
       // Remediation proof banner

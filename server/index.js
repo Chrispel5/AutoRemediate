@@ -1,3 +1,5 @@
+const fs = require('fs');
+const os = require('os');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -101,22 +103,59 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+function getLocalAwsCredentials() {
+  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    return {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      sessionToken: process.env.AWS_SESSION_TOKEN || null
+    };
+  }
+
+  try {
+    const credPath = path.join(os.homedir(), '.aws', 'credentials');
+    if (fs.existsSync(credPath)) {
+      const content = fs.readFileSync(credPath, 'utf8');
+      const keyMatch = content.match(/aws_access_key_id\s*=\s*([^\s]+)/i);
+      const secMatch = content.match(/aws_secret_access_key\s*=\s*([^\s]+)/i);
+      const tokenMatch = content.match(/aws_session_token\s*=\s*([^\s]+)/i);
+      if (keyMatch && secMatch) {
+        return {
+          accessKeyId: keyMatch[1],
+          secretAccessKey: secMatch[1],
+          sessionToken: tokenMatch ? tokenMatch[1] : null
+        };
+      }
+    }
+  } catch (e) {}
+
+  return null;
+}
+
 // Route: Connect to AWS API (Supports IAM Role ARN AssumeRole or Access Keys)
 app.post('/api/connect-aws', async (req, res) => {
   const { roleArn, accessKeyId, secretAccessKey, region, sessionToken } = req.body;
   const awsRegion = region || 'us-east-1';
 
-  if (!roleArn && (!accessKeyId || !secretAccessKey)) {
+  const localCreds = getLocalAwsCredentials() || {};
+
+  if (!roleArn && (!accessKeyId || !secretAccessKey) && !localCreds.accessKeyId) {
     return res.status(400).json({ error: 'Provide either an IAM Role ARN or Access Key ID & Secret Access Key.' });
   }
 
   try {
-    let keyId = accessKeyId;
-    let secKey = secretAccessKey;
-    let sToken = sessionToken || null;
+    let keyId = accessKeyId || localCreds.accessKeyId;
+    let secKey = secretAccessKey || localCreds.secretAccessKey;
+    let sToken = sessionToken || localCreds.sessionToken || null;
 
     if (roleArn) {
-      const baseConnector = new AWSConnector(keyId || 'dummyKey', secKey || 'dummySecret', awsRegion, sToken);
+      if (!keyId || !secKey) {
+        return res.status(400).json({
+          error: 'Assuming an IAM Role requires base credentials to sign the AssumeRole request. Please enter your AWS Access Key ID & Secret Access Key in the fields below, or configure them in your local AWS CLI (~/.aws/credentials).'
+        });
+      }
+
+      const baseConnector = new AWSConnector(keyId, secKey, awsRegion, sToken);
       const assumedCreds = await baseConnector.assumeRole(roleArn);
       keyId = assumedCreds.accessKeyId;
       secKey = assumedCreds.secretAccessKey;
@@ -143,7 +182,7 @@ app.post('/api/connect-aws', async (req, res) => {
 
     return res.json({ success: true, message });
   } catch (err) {
-    return res.status(500).json({ error: `Connection failed: ${err.message}` });
+    return res.status(400).json({ error: err.message });
   }
 });
 

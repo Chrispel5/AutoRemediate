@@ -137,17 +137,19 @@ const COPILOT_CUSTOM = {
 };
 
 function buildRemediation(finding) {
+  const isTerraformable = ['csp-missing', 'csp-present', 'hsts-missing', 'hsts-present', 'xframe-missing', 'xframe-present', 'xcto-missing', 'xcto-present', 'spf-missing', 'spf-softfail', 'spf', 'dmarc-missing', 'dmarc-none', 'dmarc', 'subdomain-takeover', 'subdomain-takeover-clean', 'stale-txt-token', 'stale-txt'].includes(finding.id) || !!finding.fix;
+
   if (finding.status === "PASS") {
     return {
       readiness: "verified",
       label: "Verified",
       primaryAction: "Close",
-      secondaryAction: null,
+      secondaryAction: isTerraformable ? "Export Terraform" : null,
       riskLevel: "low",
-      provider: [],
+      provider: ["cloudflare", "aws"],
       requires: [],
       canAutoFix: false,
-      canExportTerraform: false,
+      canExportTerraform: isTerraformable,
       canRollback: false
     };
   }

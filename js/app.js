@@ -129,16 +129,20 @@ document.addEventListener('DOMContentLoaded', () => {
         alert(`AWS Connection Failed: ${data.error}`);
       }
     } catch (err) {
-      // Fallback for static demo mode
-      window.connectedProviders.aws = true;
-      window.isCloudflareConnected = true;
-      awsStatus.textContent = roleArn ? 'AWS: Connected (Role Demo)' : 'AWS: Connected (Demo)';
-      awsStatus.classList.remove('disconnected');
-      awsStatus.classList.add('connected');
-      settingsModal.classList.add('hidden');
-      alert('Connected (Local Simulation mode active).');
-      if (currentScanData) {
-        window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
+      const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+      if (isStaticEnv) {
+        window.connectedProviders.aws = true;
+        window.isCloudflareConnected = true;
+        awsStatus.textContent = roleArn ? 'AWS: Connected (Role Demo)' : 'AWS: Connected (Demo)';
+        awsStatus.classList.remove('disconnected');
+        awsStatus.classList.add('connected');
+        settingsModal.classList.add('hidden');
+        alert('Connected (Local Simulation mode active).');
+        if (currentScanData) {
+          window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
+        }
+      } else {
+        alert(`AWS Connection Error: ${err.message}`);
       }
     } finally {
       btnConnectAws.disabled = false;

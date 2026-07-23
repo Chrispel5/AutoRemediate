@@ -1,6 +1,8 @@
 # AutoRemediate
 
-AutoRemediate is a web security scanner with controlled remediation paths for Cloudflare, Amazon CloudFront, and Amazon Route 53. It scans a domain, shows the results in a browser dashboard, and can apply selected DNS and response-header changes when the operator has approved access to the target environment.
+![AutoRemediate Interface Preview](public/images/dashboard_preview.png)
+
+AutoRemediate is a web security scanner with controlled auto-remediation paths for Cloudflare, Amazon CloudFront, and Amazon Route 53. It scans a domain, displays the results in a browser dashboard, and can apply selected DNS and response-header changes when the operator has approved access to the target environment.
 
 ## Contents
 
@@ -79,37 +81,26 @@ Scan and connection data live in memory. Restarting the server clears them.
 
 ## Screen layout
 
-The dashboard uses a dark background with blue, cyan, amber, green, and red status colours.
+The dashboard uses a modern dark theme with blue, cyan, amber, green, and red status indicators.
 
-```text
-+------------------------------------------------------------------+
-| AutoRemediate v1.0                         [Settings] [Demo Mode] |
-+------------------------------------------------------------------+
-| Cloudflare: Connected or Not Connected | AWS: Connected or Not Connected |
-+------------------------------------------------------------------+
-|                   Scan. Detect. Auto-Fix.                       |
-| [ example.com                                           ] [Scan] |
-+------------------------------------------------------------------+
-| Scan progress cards: DNS | Headers | TLS | Software | Errors     |
-|                      Cookies | Subdomains                         |
-+------------------------------------------------------------------+
-| Infrastructure detected: target, platform, remediation path      |
-+------------------------------------------------------------------+
-| Findings: severity totals and individual result cards             |
-| [Evidence] [Fix details] [Auto-Fix] [Export Terraform]           |
-+------------------------------------------------------------------+
-```
+![AutoRemediate Interface Preview](public/images/dashboard_preview.png)
 
-### Main areas
+### Main UI Components & User Inputs
 
-- **Header**: shows the product name, version, Settings button, and Demo Mode button.
-- **Connection bar**: shows Cloudflare and AWS connection state.
-- **Target input**: accepts a domain and starts a scan.
-- **Scan grid**: shows the running scanner modules while a scan is in progress.
-- **Infrastructure panel**: displays the detected hosting or edge platform and the available remediation path.
-- **Findings list**: shows one card per result. A card contains the severity, a short description, raw evidence, and available actions.
-- **Fix details panel**: slides in from the right. It shows the reason for the finding, the proposed change, verification steps, and rollback notes.
-- **Terraform window**: lets the operator choose Cloudflare or AWS, review generated Terraform, copy it, or download a `.tf` file.
+- **Header Controls (Top Right)**:
+  - **Settings Button**: Opens the provider credentials modal. Operators enter their **Cloudflare API Token** or **AWS Credentials / IAM Role ARN** here to enable live auto-remediations.
+  - **Demo Mode Button**: Instantly loads sample vulnerability findings for offline testing and evaluation.
+- **Connection Status Bar (Top Left)**:
+  - Displays the active real-time connection status for both **Cloudflare** and **AWS** (`Connected` or `Not Connected`).
+- **Target Domain Input Box (Center)**:
+  - Enter the target domain name to scan (e.g. `topnotchguides.com.ng` or `example.com`).
+  - Click **Scan Target →** to initiate parallel security checks.
+- **Infrastructure Panel**: Displays the target host, detected hosting/CDN provider (Cloudflare, AWS CloudFront/S3, Vercel, Apache, Nginx), and the active remediation path.
+- **Findings Cards & Remediation Actions**:
+  - Each vulnerability finding displays severity status, description, raw evidence, and interactive action buttons:
+    - **Copilot**: Opens a detailed remediation guide explaining what is wrong, why it matters, access needed, and rollback instructions.
+    - **Auto-Fix**: Automatically executes an API request to Cloudflare or AWS to remediate the vulnerability.
+    - **Export Terraform**: Generates and downloads production-ready HashiCorp HCL `.tf` code for Cloudflare and AWS resources.
 
 ## Architecture
 
