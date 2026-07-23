@@ -2,10 +2,11 @@ const crypto = require('crypto');
 const fetch = require('node-fetch');
 
 class AWSConnector {
-  constructor(accessKeyId, secretAccessKey, region = 'us-east-1') {
+  constructor(accessKeyId, secretAccessKey, region = 'us-east-1', sessionToken = null) {
     this.accessKeyId = accessKeyId;
     this.secretAccessKey = secretAccessKey;
     this.region = region;
+    this.sessionToken = sessionToken;
   }
 
   // AWS Signature Version 4 Helper
@@ -19,6 +20,9 @@ class AWSConnector {
     });
     signingHeaders.host = host;
     signingHeaders['x-amz-date'] = datetime;
+    if (this.sessionToken) {
+      signingHeaders['x-amz-security-token'] = this.sessionToken;
+    }
 
     // 1. Create Canonical Request
     const canonicalUri = path || '/';
@@ -113,6 +117,34 @@ class AWSConnector {
       console.error('STS verification error:', err);
       return false;
     }
+  }
+
+  // Assume an IAM Role via STS and return temporary session credentials
+  async assumeRole(roleArn, sessionName = 'AutoRemediateSession') {
+    const body = `Action=AssumeRole&Version=2011-06-15&RoleArn=${encodeURIComponent(roleArn)}&RoleSessionName=${encodeURIComponent(sessionName)}&DurationSeconds=3600`;
+    const xml = await this.request(
+      'sts',
+      'sts.amazonaws.com',
+      'POST',
+      '/',
+      {},
+      { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    );
+
+    const accessKeyIdMatch = xml.match(/<AccessKeyId>([^<]+)<\/AccessKeyId>/);
+    const secretAccessKeyMatch = xml.match(/<SecretAccessKey>([^<]+)<\/SecretAccessKey>/);
+    const sessionTokenMatch = xml.match(/<SessionToken>([^<]+)<\/SessionToken>/);
+
+    if (!accessKeyIdMatch || !secretAccessKeyMatch || !sessionTokenMatch) {
+      throw new Error(`Failed to assume IAM Role ${roleArn}. STS XML Response: ${xml}`);
+    }
+
+    return {
+      accessKeyId: accessKeyIdMatch[1],
+      secretAccessKey: secretAccessKeyMatch[1],
+      sessionToken: sessionTokenMatch[1]
+    };
   }
 
   // List Hosted Zones in Route 53

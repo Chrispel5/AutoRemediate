@@ -50,11 +50,16 @@
       <hr style="border-color: rgba(255,255,255,0.08); margin: 20px 0;">
       <h3 style="color: #ff9900; font-size: 14px; margin-bottom: 10px;">AWS (CloudFront + Route 53)</h3>
       <div class="form-group">
-        <label>AWS Access Key ID</label>
+        <label>AWS IAM Role ARN (AssumeRole - Recommended)</label>
+        <input type="text" id="aws-role-arn" placeholder="arn:aws:iam::123456789012:role/AutoRemediate-Exec-Role">
+        <small style="color: #00d4ff;">Enter your IAM Role ARN to assume role automatically without static keys</small>
+      </div>
+      <div class="form-group">
+        <label>AWS Access Key ID (Optional if Role ARN used)</label>
         <input type="text" id="aws-access-key" placeholder="AKIA...">
       </div>
       <div class="form-group">
-        <label>AWS Secret Access Key</label>
+        <label>AWS Secret Access Key (Optional if Role ARN used)</label>
         <input type="password" id="aws-secret-key" placeholder="Enter your AWS secret key">
       </div>
       <div class="form-group">

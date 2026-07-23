@@ -86,18 +86,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Handle AWS connection verification
   const btnConnectAws = document.getElementById('btn-connect-aws');
+  const awsRoleArnInput = document.getElementById('aws-role-arn');
   const awsAccessKeyInput = document.getElementById('aws-access-key');
   const awsSecretKeyInput = document.getElementById('aws-secret-key');
   const awsRegionInput = document.getElementById('aws-region');
   const awsStatus = document.getElementById('aws-status');
 
   btnConnectAws.addEventListener('click', async () => {
-    const accessKeyId = awsAccessKeyInput.value.trim();
-    const secretAccessKey = awsSecretKeyInput.value.trim();
-    const region = awsRegionInput.value.trim() || 'us-east-1';
+    const roleArn = awsRoleArnInput ? awsRoleArnInput.value.trim() : '';
+    const accessKeyId = awsAccessKeyInput ? awsAccessKeyInput.value.trim() : '';
+    const secretAccessKey = awsSecretKeyInput ? awsSecretKeyInput.value.trim() : '';
+    const region = awsRegionInput ? awsRegionInput.value.trim() || 'us-east-1' : 'us-east-1';
     
-    if (!accessKeyId || !secretAccessKey) {
-      alert('Please enter both AWS Access Key ID and Secret Access Key.');
+    if (!roleArn && (!accessKeyId || !secretAccessKey)) {
+      alert('Please enter an IAM Role ARN (Recommended) or Access Key ID & Secret Access Key.');
       return;
     }
 
@@ -108,18 +110,18 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await fetch('/api/connect-aws', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessKeyId, secretAccessKey, region })
+        body: JSON.stringify({ roleArn, accessKeyId, secretAccessKey, region })
       });
 
       const data = await response.json();
       if (response.ok && data.success) {
         window.connectedProviders.aws = true;
         window.isCloudflareConnected = true;
-        awsStatus.textContent = 'AWS: Connected';
+        awsStatus.textContent = roleArn ? 'AWS: Connected (IAM Role)' : 'AWS: Connected';
         awsStatus.classList.remove('disconnected');
         awsStatus.classList.add('connected');
         settingsModal.classList.add('hidden');
-        alert('Connected to AWS successfully!');
+        alert(data.message || 'Connected to AWS successfully!');
         if (currentScanData) {
           window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
         }
@@ -130,7 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Fallback for static demo mode
       window.connectedProviders.aws = true;
       window.isCloudflareConnected = true;
-      awsStatus.textContent = 'AWS: Connected (Demo)';
+      awsStatus.textContent = roleArn ? 'AWS: Connected (Role Demo)' : 'AWS: Connected (Demo)';
       awsStatus.classList.remove('disconnected');
       awsStatus.classList.add('connected');
       settingsModal.classList.add('hidden');
@@ -640,8 +642,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     return domain;
   }
-
-
 
   function getDemoData() {
     return {

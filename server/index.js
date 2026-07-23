@@ -51,8 +51,10 @@ let cfConnection = {
 };
 let awsConnection = {
   connected: false,
+  roleArn: null,
   accessKeyId: null,
   secretAccessKey: null,
+  sessionToken: null,
   region: 'us-east-1',
   distributionMap: new Map() // domain -> distributionId
 };
@@ -70,6 +72,7 @@ app.post('/api/connect', async (req, res) => {
     const isValid = await connector.verifyToken();
     console.log('[CONNECT] Token verification result:', isValid);
     if (!isValid) {
+      console.log('[CONNECT] Token verification failed');
       return res.status(401).json({ error: 'Invalid API Token' });
     }
 
@@ -91,35 +94,54 @@ app.get('/api/status', (req, res) => {
     cloudflareConnected: cfConnection.connected,
     awsConnected: awsConnection.connected,
     hasToken: !!cfConnection.token,
-    hasAwsKey: !!awsConnection.accessKeyId,
+    hasAwsKey: !!(awsConnection.accessKeyId || awsConnection.roleArn),
+    roleArn: awsConnection.roleArn,
     cachedScans: scanCache.size,
     cachedZones: cfConnection.zoneMap.size
   });
 });
 
-// Route: Connect to AWS API
+// Route: Connect to AWS API (Supports IAM Role ARN AssumeRole or Access Keys)
 app.post('/api/connect-aws', async (req, res) => {
-  const { accessKeyId, secretAccessKey, region } = req.body;
-  if (!accessKeyId || !secretAccessKey) {
-    return res.status(400).json({ error: 'AWS Access Key ID and Secret Access Key are required' });
-  }
-
+  const { roleArn, accessKeyId, secretAccessKey, region, sessionToken } = req.body;
   const awsRegion = region || 'us-east-1';
 
+  if (!roleArn && (!accessKeyId || !secretAccessKey)) {
+    return res.status(400).json({ error: 'Provide either an IAM Role ARN or Access Key ID & Secret Access Key.' });
+  }
+
   try {
-    const connector = new AWSConnector(accessKeyId, secretAccessKey, awsRegion);
+    let keyId = accessKeyId;
+    let secKey = secretAccessKey;
+    let sToken = sessionToken || null;
+
+    if (roleArn) {
+      const baseConnector = new AWSConnector(keyId || 'dummyKey', secKey || 'dummySecret', awsRegion, sToken);
+      const assumedCreds = await baseConnector.assumeRole(roleArn);
+      keyId = assumedCreds.accessKeyId;
+      secKey = assumedCreds.secretAccessKey;
+      sToken = assumedCreds.sessionToken;
+    }
+
+    const connector = new AWSConnector(keyId, secKey, awsRegion, sToken);
     const isValid = await connector.verifyCredentials();
     if (!isValid) {
-      return res.status(401).json({ error: 'Invalid AWS Credentials' });
+      return res.status(401).json({ error: 'Invalid AWS Credentials or Role Assumption failed.' });
     }
 
     awsConnection.connected = true;
-    awsConnection.accessKeyId = accessKeyId;
-    awsConnection.secretAccessKey = secretAccessKey;
+    awsConnection.roleArn = roleArn || null;
+    awsConnection.accessKeyId = keyId;
+    awsConnection.secretAccessKey = secKey;
+    awsConnection.sessionToken = sToken;
     awsConnection.region = awsRegion;
     awsConnection.distributionMap.clear();
 
-    return res.json({ success: true, message: 'Connected to AWS successfully' });
+    const message = roleArn
+      ? `Successfully assumed IAM Role (${roleArn}) and connected to AWS!`
+      : 'Connected to AWS successfully!';
+
+    return res.json({ success: true, message });
   } catch (err) {
     return res.status(500).json({ error: `Connection failed: ${err.message}` });
   }
@@ -274,7 +296,7 @@ app.post('/api/remediate', async (req, res) => {
         }
         remediationResult = await dnsRemediator.applyFix(connector, zoneId, scan.target, finding);
       } else if (awsConnection.connected) {
-        const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region);
+        const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region, awsConnection.sessionToken);
         remediationResult = await route53Remediator.applyFix(awsConn, scan.target, finding);
       }
     } else if (finding.fix.type === 'cloudflare-rule') {
@@ -287,7 +309,7 @@ app.post('/api/remediate', async (req, res) => {
         }
         remediationResult = await headerRemediator.applyFix(connector, zoneId, scan.target, finding);
       } else if (awsConnection.connected) {
-        const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region);
+        const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region, awsConnection.sessionToken);
         remediationResult = await cloudfrontRemediator.applyFix(awsConn, scan.target, finding);
       }
     } else {
