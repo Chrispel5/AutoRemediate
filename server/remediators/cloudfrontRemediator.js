@@ -19,27 +19,21 @@ async function applyFix(connector, domain, finding) {
     // 2. Fetch the current distribution configuration to mutate
     const { xml, etag } = await connector.getDistributionConfig(distId);
 
-    // 3. Define the headers config to apply
-    const headersConfig = {};
-    if (fix.header === 'Content-Security-Policy') {
-      headersConfig.ContentSecurityPolicy = fix.value;
-    } else if (fix.header === 'Strict-Transport-Security') {
-      headersConfig.StrictTransportSecurity = {
+    // 3. Build a comprehensive security headers policy covering all security header standards
+    const headersConfig = {
+      ContentSecurityPolicy: fix.header === 'Content-Security-Policy' ? fix.value : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';",
+      StrictTransportSecurity: {
         maxAge: 31536000,
         includeSubdomains: 'true',
         preload: 'true'
-      };
-    } else if (fix.header === 'X-Frame-Options') {
-      headersConfig.FrameOptions = fix.value || 'DENY';
-    } else if (fix.header === 'X-Content-Type-Options') {
-      headersConfig.ContentTypeOptions = 'true';
-    } else if (fix.header === 'Referrer-Policy') {
-      headersConfig.ReferrerPolicy = fix.value || 'strict-origin-when-cross-origin';
-    } else {
-      headersConfig.CustomHeaders = [
-        { name: fix.header, value: fix.value || 'geolocation=(), microphone=(), camera=()' }
-      ];
-    }
+      },
+      FrameOptions: fix.header === 'X-Frame-Options' ? (fix.value || 'DENY') : 'DENY',
+      ContentTypeOptions: 'true',
+      ReferrerPolicy: fix.header === 'Referrer-Policy' ? (fix.value || 'strict-origin-when-cross-origin') : 'strict-origin-when-cross-origin',
+      CustomHeaders: [
+        { name: 'Permissions-Policy', value: fix.header === 'Permissions-Policy' ? (fix.value || 'geolocation=(), microphone=(), camera=()') : 'geolocation=(), microphone=(), camera=()' }
+      ]
+    };
 
     // 4. Create the new Response Headers Policy via CloudFront API
     const policyName = `AutoRemediate-${fix.header.replace(/[^a-zA-Z0-9-]/g, '')}-${Date.now()}`;

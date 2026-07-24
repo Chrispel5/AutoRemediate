@@ -250,7 +250,7 @@ app.post('/api/scan', async (req, res) => {
             const policyId = policyMatch[1];
             // Mark header findings as PASS since policy is active on CloudFront
             findings.forEach(f => {
-              if (['csp-missing', 'hsts-missing', 'x-frame-missing', 'x-content-type-missing'].includes(f.id)) {
+              if (['csp-missing', 'hsts-missing', 'x-frame-missing', 'x-content-type-missing', 'referrer-policy-missing', 'permissions-policy-missing'].includes(f.id)) {
                 f.status = 'PASS';
                 f.severity = 'PASS';
                 f.evidence = `CloudFront Response Headers Policy Active (Policy ID: ${policyId})`;
