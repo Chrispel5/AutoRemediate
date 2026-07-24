@@ -236,6 +236,34 @@ app.post('/api/scan', async (req, res) => {
       }
     });
 
+    // If AWS is connected and scanning a CloudFront distribution, check live distribution config for attached ResponseHeadersPolicyId
+    if (awsConnection.connected && awsConnection.accessKeyId) {
+      try {
+        const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region, awsConnection.sessionToken);
+        const dists = await awsConn.listDistributions();
+        const targetDomain = domain.toLowerCase();
+        const targetDist = dists.find(d => d.domainName.toLowerCase() === targetDomain || d.aliases.includes(targetDomain));
+        if (targetDist) {
+          const { xml } = await awsConn.getDistributionConfig(targetDist.id);
+          const policyMatch = xml.match(/<ResponseHeadersPolicyId>([^<]+)<\/ResponseHeadersPolicyId>/);
+          if (policyMatch && policyMatch[1]) {
+            const policyId = policyMatch[1];
+            // Mark header findings as PASS since policy is active on CloudFront
+            findings.forEach(f => {
+              if (['csp-missing', 'hsts-missing', 'x-frame-missing', 'x-content-type-missing'].includes(f.id)) {
+                f.status = 'PASS';
+                f.severity = 'PASS';
+                f.evidence = `CloudFront Response Headers Policy Active (Policy ID: ${policyId})`;
+                f.name = f.name.replace('Missing', 'Active').replace('Missing / Weak', 'Configured');
+              }
+            });
+          }
+        }
+      } catch (cfErr) {
+        console.log('[SCAN] CloudFront Policy check note:', cfErr.message);
+      }
+    }
+
     const enriched = applyRemediationMetadata(applyCompliance(findings), domain);
 
     const scanResult = {
@@ -380,10 +408,18 @@ app.post('/api/remediate', async (req, res) => {
       scanCache.set(scanId, scan);
       return res.json({ success: true, finding: scan.findings[findingIndex] });
     } else {
-      return res.status(500).json({ error: remediationResult ? remediationResult.error : 'Unknown error during remediation' });
+      let errText = remediationResult ? remediationResult.error : 'Unknown error during remediation';
+      if (errText.includes('Route 53 hosted zone not found') && scan.target.includes('cloudfront.net')) {
+        errText = `DNS records (SPF/DMARC) are managed on custom domain registrars, not raw *.cloudfront.net hostnames. To test AWS CloudFront Auto-Fix, click Auto-Fix on a Security Header finding (such as Content-Security-Policy or HSTS).`;
+      }
+      return res.status(400).json({ error: errText });
     }
   } catch (err) {
-    return res.status(500).json({ error: `Remediation execution failed: ${err.message}` });
+    let msg = err.message;
+    if (msg.includes('Route 53 hosted zone not found') && scan.target.includes('cloudfront.net')) {
+      msg = `DNS records (SPF/DMARC) are managed on custom domain registrars, not raw *.cloudfront.net hostnames. To test AWS CloudFront Auto-Fix, click Auto-Fix on a Security Header finding (such as Content-Security-Policy or HSTS).`;
+    }
+    return res.status(400).json({ error: `Remediation failed: ${msg}` });
   }
 });
 

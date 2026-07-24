@@ -291,14 +291,42 @@ class AWSConnector {
         <Override>true</Override>
       </ContentTypeOptions>`;
     }
+    if (headersConfig.ReferrerPolicy) {
+      securityHeadersXml += `<ReferrerPolicy>
+        <Override>true</Override>
+        <ReferrerPolicy>${escapeXml(headersConfig.ReferrerPolicy)}</ReferrerPolicy>
+      </ReferrerPolicy>`;
+    }
+
+    let customHeadersXml = '';
+    if (headersConfig.CustomHeaders && Array.isArray(headersConfig.CustomHeaders) && headersConfig.CustomHeaders.length > 0) {
+      const items = headersConfig.CustomHeaders.map(ch => `
+        <ResponseHeadersPolicyCustomHeader>
+          <Header>${escapeXml(ch.name)}</Header>
+          <Value>${escapeXml(ch.value)}</Value>
+          <Override>true</Override>
+        </ResponseHeadersPolicyCustomHeader>`).join('');
+
+      customHeadersXml = `
+  <CustomHeadersConfig>
+    <Quantity>${headersConfig.CustomHeaders.length}</Quantity>
+    <Items>${items}
+    </Items>
+  </CustomHeadersConfig>`;
+    }
+
+    let fullSecurityHeadersBlock = '';
+    if (securityHeadersXml.trim().length > 0) {
+      fullSecurityHeadersBlock = `
+  <SecurityHeadersConfig>
+    ${securityHeadersXml}
+  </SecurityHeadersConfig>`;
+    }
 
     const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
 <ResponseHeadersPolicyConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
   <Name>${policyName}</Name>
-  <Comment>AutoRemediate Security Headers Policy</Comment>
-  <SecurityHeadersConfig>
-    ${securityHeadersXml}
-  </SecurityHeadersConfig>
+  <Comment>AutoRemediate Security Headers Policy</Comment>${fullSecurityHeadersBlock}${customHeadersXml}
 </ResponseHeadersPolicyConfig>`;
 
     const resXml = await this.request(

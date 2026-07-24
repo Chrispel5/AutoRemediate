@@ -30,9 +30,15 @@ async function applyFix(connector, domain, finding) {
         preload: 'true'
       };
     } else if (fix.header === 'X-Frame-Options') {
-      headersConfig.FrameOptions = 'DENY';
+      headersConfig.FrameOptions = fix.value || 'DENY';
     } else if (fix.header === 'X-Content-Type-Options') {
       headersConfig.ContentTypeOptions = 'true';
+    } else if (fix.header === 'Referrer-Policy') {
+      headersConfig.ReferrerPolicy = fix.value || 'strict-origin-when-cross-origin';
+    } else {
+      headersConfig.CustomHeaders = [
+        { name: fix.header, value: fix.value || 'geolocation=(), microphone=(), camera=()' }
+      ];
     }
 
     // 4. Create the new Response Headers Policy via CloudFront API
