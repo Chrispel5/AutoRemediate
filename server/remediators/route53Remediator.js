@@ -1,5 +1,36 @@
 // Route 53 DNS Remediator
-const dns = require('dns').promises;
+const { resolveTxtJoined } = require('../utils/dnsResolver');
+const { quoteRoute53Txt, unquoteRoute53Txt } = require('../utils/route53Txt');
+
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+// Compare a stored Route 53 TXT value (quoted, possibly multi-chunk) with
+// the plain content of a fix.
+function txtValueMatches(storedValue, plainContent) {
+  const stored = unquoteRoute53Txt(storedValue);
+  if (stored === plainContent) return true;
+  // Same record family (SPF / DMARC) — this is the value the fix replaces
+  if (plainContent.startsWith('v=spf1') && stored.startsWith('v=spf1')) return true;
+  if (/^v=DMARC1/i.test(plainContent) && /^v=DMARC1/i.test(stored)) return true;
+  return false;
+}
+
+// Re-query public DNS and assert presence/absence, with retries for propagation.
+async function verifyTxtRecord(recordName, expectedContent, shouldExist) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const records = await resolveTxtJoined(recordName);
+      const found = records.some(r => r === expectedContent || r.includes(expectedContent));
+      if (found === shouldExist) return true;
+    } catch (err) {
+      if (!shouldExist && (err.code === 'ENOTFOUND' || err.code === 'ENODATA')) {
+        return true;
+      }
+    }
+    await sleep(3000);
+  }
+  return false;
+}
 
 async function applyFix(connector, domain, finding) {
   const fix = finding.fix;
@@ -15,54 +46,73 @@ async function applyFix(connector, domain, finding) {
     }
 
     const zoneId = targetZone.id;
-    let action = 'UPSERT';
-    let recordName = fix.record.name;
-    let recordType = fix.record.type;
-    let recordValue = fix.record.content;
+    const recordName = fix.record.name;
+    const recordType = fix.record.type;
+    const recordValue = fix.record.content;
+
+    // 2. Fetch the existing RRset so UPSERT/DELETE never wipes sibling values
+    const existing = await connector.listResourceRecordSets(zoneId, recordName, recordType);
+
+    let action;
+    let verification;
 
     if (fix.type === 'dns-delete') {
-      action = 'DELETE';
-    }
+      if (!existing) {
+        throw new Error(`No existing ${recordType} record set for ${recordName} to delete.`);
+      }
 
-    // 2. Apply DNS Record Change batch via Route 53
-    await connector.changeResourceRecordSets(zoneId, action, recordName, recordType, recordValue);
-
-    // 3. Wait 5 seconds to allow propagation across AWS Route 53 servers
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    // 4. Verification Check
-    let verificationStatus = 'DNS records updated successfully. Verification query pending.';
-    try {
-      if (recordType === 'TXT') {
-        const records = await dns.resolveTxt(recordName);
-        const flatRecords = records.flat();
-        const found = flatRecords.some(r => r.includes(recordValue) || r === recordValue);
-        if (action === 'DELETE') {
-          if (!found) {
-            verificationStatus = `Verified: DNS TXT record for ${recordName} successfully deleted.`;
-          } else {
-            verificationStatus = `Warning: Record still resolving in DNS cache. Delete pending propagation.`;
-          }
-        } else {
-          if (found) {
-            verificationStatus = `Verified: Active DNS TXT record found: ${recordValue}`;
-          } else {
-            verificationStatus = `Warning: Record added, but DNS query cache has not updated yet.`;
-          }
+      if (existing.values.length > 1) {
+        // Siblings exist — remove only the targeted value via UPSERT
+        const remaining = existing.values.filter(v => !txtValueMatches(v, recordValue));
+        if (remaining.length === existing.values.length) {
+          throw new Error(`Could not find value "${recordValue}" in the existing ${recordType} RRset for ${recordName}.`);
         }
-      }
-    } catch (e) {
-      if (action === 'DELETE') {
-        verificationStatus = `Verified: DNS TXT record for ${recordName} successfully removed.`;
+        await connector.changeResourceRecordSets(zoneId, 'UPSERT', recordName, recordType, remaining, existing.ttl);
+        action = 'DELETE';
       } else {
-        verificationStatus = `Record applied, verification failed: ${e.message}`;
+        // Single-value RRset — DELETE must submit the exact existing values and TTL
+        await connector.changeResourceRecordSets(zoneId, 'DELETE', recordName, recordType, existing.values, existing.ttl);
+        action = 'DELETE';
       }
+
+      const confirmed = recordType === 'TXT'
+        ? await verifyTxtRecord(recordName, recordValue, false)
+        : false;
+      verification = confirmed
+        ? `Verified: DNS TXT record for ${recordName} successfully removed.`
+        : `Applied — propagation pending (record may still resolve from DNS caches for a few minutes).`;
+    } else {
+      // UPSERT — preserve sibling values, replace only the matching one
+      const newValue = recordType === 'TXT' ? quoteRoute53Txt(recordValue) : recordValue;
+      let values = [newValue];
+      let ttl = 300;
+
+      if (existing) {
+        ttl = existing.ttl;
+        const idx = existing.values.findIndex(v => txtValueMatches(v, recordValue));
+        if (idx >= 0) {
+          existing.values[idx] = newValue;
+        } else {
+          existing.values.push(newValue);
+        }
+        values = existing.values;
+      }
+
+      await connector.changeResourceRecordSets(zoneId, 'UPSERT', recordName, recordType, values, ttl);
+      action = 'UPSERT';
+
+      const confirmed = recordType === 'TXT'
+        ? await verifyTxtRecord(recordName, recordValue, true)
+        : false;
+      verification = confirmed
+        ? `Verified: Active DNS TXT record found: ${recordValue}`
+        : `Applied — propagation pending (record not yet visible via public DNS): ${recordValue}`;
     }
 
     return {
       success: true,
       action: `${action}_RECORD`,
-      verification: verificationStatus
+      verification
     };
 
   } catch (err) {

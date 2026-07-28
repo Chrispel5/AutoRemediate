@@ -137,7 +137,7 @@ const COPILOT_CUSTOM = {
 };
 
 function buildRemediation(finding) {
-  const isTerraformable = ['csp-missing', 'csp-present', 'hsts-missing', 'hsts-present', 'xframe-missing', 'xframe-present', 'xcto-missing', 'xcto-present', 'spf-missing', 'spf-softfail', 'spf', 'dmarc-missing', 'dmarc-none', 'dmarc', 'subdomain-takeover', 'subdomain-takeover-clean', 'stale-txt-token', 'stale-txt'].includes(finding.id) || !!finding.fix;
+  const isTerraformable = ['csp-missing', 'csp', 'hsts-missing', 'hsts', 'xframe-missing', 'xframe', 'xcto-missing', 'xcto', 'spf-missing', 'spf-softfail', 'spf', 'dmarc-missing', 'dmarc-none', 'dmarc', 'subdomain-takeover', 'subdomain-takeover-clean', 'stale-txt-token', 'stale-txt'].includes(finding.id) || !!finding.fix;
 
   if (finding.status === "PASS") {
     return {

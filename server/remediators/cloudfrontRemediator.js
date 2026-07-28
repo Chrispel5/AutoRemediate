@@ -1,4 +1,98 @@
 // AWS CloudFront Headers Remediator
+
+function unescapeXml(value) {
+  return value.toString()
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+// Build a policy config containing ONLY the header the user asked to fix —
+// force-setting all six headers with defaults can break the site.
+function buildHeadersConfigForFix(fix) {
+  const config = {};
+  switch (fix.header) {
+    case 'Content-Security-Policy':
+      config.ContentSecurityPolicy = fix.value;
+      break;
+    case 'Strict-Transport-Security': {
+      const maxAgeMatch = (fix.value || '').match(/max-age=(\d+)/i);
+      config.StrictTransportSecurity = {
+        maxAge: maxAgeMatch ? parseInt(maxAgeMatch[1], 10) : 31536000,
+        includeSubdomains: /includesubdomains/i.test(fix.value || '') ? 'true' : 'false',
+        preload: /preload/i.test(fix.value || '') ? 'true' : 'false'
+      };
+      break;
+    }
+    case 'X-Frame-Options':
+      config.FrameOptions = fix.value || 'DENY';
+      break;
+    case 'X-Content-Type-Options':
+      config.ContentTypeOptions = 'true';
+      break;
+    case 'Referrer-Policy':
+      config.ReferrerPolicy = fix.value || 'strict-origin-when-cross-origin';
+      break;
+    default:
+      config.CustomHeaders = [{ name: fix.header, value: fix.value || '' }];
+      break;
+  }
+  return config;
+}
+
+// Parse an existing ResponseHeadersPolicyConfig XML back into a config object
+function parsePolicyXmlToConfig(xml) {
+  const config = {};
+
+  const csp = xml.match(/<ContentSecurityPolicy>[\s\S]*?<ContentSecurityPolicy>([^<]*)<\/ContentSecurityPolicy>/);
+  if (csp) config.ContentSecurityPolicy = unescapeXml(csp[1]);
+
+  if (/<ContentTypeOptions>/.test(xml)) config.ContentTypeOptions = 'true';
+
+  const frameOption = xml.match(/<FrameOption>([^<]+)<\/FrameOption>/);
+  if (frameOption) config.FrameOptions = frameOption[1];
+
+  const referrer = xml.match(/<ReferrerPolicy>[\s\S]*?<ReferrerPolicy>([^<]*)<\/ReferrerPolicy>/);
+  if (referrer) config.ReferrerPolicy = unescapeXml(referrer[1]);
+
+  const stsBlock = xml.match(/<StrictTransportSecurity>([\s\S]*?)<\/StrictTransportSecurity>/);
+  if (stsBlock) {
+    const maxAge = stsBlock[1].match(/<AccessControlMaxAgeSec>(\d+)<\/AccessControlMaxAgeSec>/);
+    const includeSub = stsBlock[1].match(/<IncludeSubdomains>([^<]+)<\/IncludeSubdomains>/);
+    const preload = stsBlock[1].match(/<Preload>([^<]+)<\/Preload>/);
+    config.StrictTransportSecurity = {
+      maxAge: maxAge ? parseInt(maxAge[1], 10) : 31536000,
+      includeSubdomains: includeSub ? includeSub[1] : 'false',
+      preload: preload ? preload[1] : 'false'
+    };
+  }
+
+  const customItems = xml.matchAll(/<ResponseHeadersPolicyCustomHeader>([\s\S]*?)<\/ResponseHeadersPolicyCustomHeader>/g);
+  const customs = [];
+  for (const item of customItems) {
+    const header = item[1].match(/<Header>([^<]+)<\/Header>/);
+    const value = item[1].match(/<Value>([^<]*)<\/Value>/);
+    if (header) customs.push({ name: unescapeXml(header[1]), value: value ? unescapeXml(value[1]) : '' });
+  }
+  if (customs.length > 0) config.CustomHeaders = customs;
+
+  return config;
+}
+
+// Merge the requested header into the existing policy config
+function mergeHeadersConfig(existing, requested) {
+  const merged = { ...existing, ...requested };
+  if (existing.CustomHeaders || requested.CustomHeaders) {
+    const byName = new Map();
+    [...(existing.CustomHeaders || []), ...(requested.CustomHeaders || [])]
+      .forEach(ch => byName.set(ch.name.toLowerCase(), ch));
+    merged.CustomHeaders = [...byName.values()];
+  }
+  return merged;
+}
+
 async function applyFix(connector, domain, finding) {
   const fix = finding.fix;
   
@@ -19,67 +113,67 @@ async function applyFix(connector, domain, finding) {
     // 2. Fetch the current distribution configuration to mutate
     const { xml, etag } = await connector.getDistributionConfig(distId);
 
-    // 3. Build a comprehensive security headers policy covering all security header standards
-    const headersConfig = {
-      ContentSecurityPolicy: fix.header === 'Content-Security-Policy' ? fix.value : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';",
-      StrictTransportSecurity: {
-        maxAge: 31536000,
-        includeSubdomains: 'true',
-        preload: 'true'
-      },
-      FrameOptions: fix.header === 'X-Frame-Options' ? (fix.value || 'DENY') : 'DENY',
-      ContentTypeOptions: 'true',
-      ReferrerPolicy: fix.header === 'Referrer-Policy' ? (fix.value || 'strict-origin-when-cross-origin') : 'strict-origin-when-cross-origin',
-      CustomHeaders: [
-        { name: 'Permissions-Policy', value: fix.header === 'Permissions-Policy' ? (fix.value || 'geolocation=(), microphone=(), camera=()') : 'geolocation=(), microphone=(), camera=()' }
-      ]
-    };
-
-    // 4. Create the new Response Headers Policy via CloudFront API
-    const policyName = `AutoRemediate-${fix.header.replace(/[^a-zA-Z0-9-]/g, '')}-${Date.now()}`;
-    const policyId = await connector.createResponseHeadersPolicy(policyName, headersConfig);
-
-    // 5. Update the distribution configuration XML to attach the policyId
-    // Parse CacheBehaviors or DefaultCacheBehavior block and inject ResponseHeadersPolicyId
-    let updatedConfig = xml;
-    
-    // We locate the <DefaultCacheBehavior> section and replace/inject <ResponseHeadersPolicyId>
     const dcbMatch = xml.match(/<DefaultCacheBehavior>([\s\S]*?)<\/DefaultCacheBehavior>/);
     if (!dcbMatch) {
       throw new Error('DefaultCacheBehavior section not found in CloudFront distribution configuration.');
     }
 
     let dcbContent = dcbMatch[1];
-    if (dcbContent.includes('<ResponseHeadersPolicyId>')) {
-      // Replace existing policy reference
-      dcbContent = dcbContent.replace(/<ResponseHeadersPolicyId>[^<]*<\/ResponseHeadersPolicyId>/, `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>`);
+    const requestedConfig = buildHeadersConfigForFix(fix);
+    const existingPolicyMatch = dcbContent.match(/<ResponseHeadersPolicyId>([^<]+)<\/ResponseHeadersPolicyId>/);
+
+    let policyId;
+    let policyNote;
+
+    if (existingPolicyMatch) {
+      // 3a. A policy is already attached — merge the requested header into it
+      // and UPDATE that same policy (no orphan policies, no default headers).
+      policyId = existingPolicyMatch[1];
+      const policy = await connector.getResponseHeadersPolicy(policyId);
+      const nameMatch = policy.xml.match(/<Name>([^<]+)<\/Name>/);
+      const commentMatch = policy.xml.match(/<Comment>([^<]*)<\/Comment>/);
+      const mergedConfig = mergeHeadersConfig(parsePolicyXmlToConfig(policy.xml), requestedConfig);
+      const updatedPolicyXml = connector.buildResponseHeadersPolicyXml(
+        nameMatch ? unescapeXml(nameMatch[1]) : 'AutoRemediate-Policy',
+        commentMatch ? unescapeXml(commentMatch[1]) : '',
+        mergedConfig
+      );
+      await connector.updateResponseHeadersPolicy(policyId, policy.etag, updatedPolicyXml);
+      policyNote = `merged ${fix.header} into existing Response Headers Policy (${policyId})`;
     } else {
-      // Append right before ViewerProtocolPolicy or at the end of DefaultCacheBehavior content
-      if (dcbContent.includes('<Compress>')) {
-        dcbContent = dcbContent.replace('<Compress>', `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>\n<Compress>`);
-      } else if (dcbContent.includes('<ViewerProtocolPolicy>')) {
-        dcbContent = dcbContent.replace('<ViewerProtocolPolicy>', `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>\n<ViewerProtocolPolicy>`);
+      // 3b. No policy attached — create one containing only the requested header
+      const policyName = `AutoRemediate-${fix.header.replace(/[^a-zA-Z0-9-]/g, '')}-${Date.now()}`;
+      policyId = await connector.createResponseHeadersPolicy(policyName, requestedConfig);
+
+      // 4. Attach it inside DefaultCacheBehavior. Per the DistributionConfig
+      // schema sequence, ResponseHeadersPolicyId sits after OriginRequestPolicyId
+      // and before ForwardedValues / MinTTL.
+      if (dcbContent.includes('<ForwardedValues>')) {
+        dcbContent = dcbContent.replace('<ForwardedValues>', `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>\n<ForwardedValues>`);
+      } else if (dcbContent.includes('<MinTTL>')) {
+        dcbContent = dcbContent.replace('<MinTTL>', `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>\n<MinTTL>`);
       } else {
         dcbContent += `\n<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>`;
       }
+
+      let updatedConfig = xml.replace(/<DefaultCacheBehavior>[\s\S]*?<\/DefaultCacheBehavior>/, `<DefaultCacheBehavior>${dcbContent}</DefaultCacheBehavior>`);
+
+      // We must clean up top level distribution wrapper wrapper if any to just keep <DistributionConfig>
+      const configMatch = updatedConfig.match(/<DistributionConfig[\s\S]*<\/DistributionConfig>/);
+      if (configMatch) {
+        updatedConfig = configMatch[0];
+      }
+
+      // 5. Push configuration updates to CloudFront
+      await connector.updateDistributionConfig(distId, etag, updatedConfig);
+      policyNote = `attached new Response Headers Policy (${policyId})`;
     }
-
-    updatedConfig = updatedConfig.replace(/<DefaultCacheBehavior>[\s\S]*?<\/DefaultCacheBehavior>/, `<DefaultCacheBehavior>${dcbContent}</DefaultCacheBehavior>`);
-
-    // We must clean up top level distribution wrapper wrapper if any to just keep <DistributionConfig>
-    const configMatch = updatedConfig.match(/<DistributionConfig[\s\S]*<\/DistributionConfig>/);
-    if (configMatch) {
-      updatedConfig = configMatch[0];
-    }
-
-    // 6. Push configuration updates to CloudFront
-    await connector.updateDistributionConfig(distId, etag, updatedConfig);
 
     return {
       success: true,
       action: 'UPDATE_CLOUDFRONT_HEADERS_POLICY',
       policyId,
-      verification: `Attached Response Headers Policy (${policyId}) to inject ${fix.header}. Deploying to CloudFront edge nodes (takes 3-5 mins).`
+      verification: `CloudFront ${policyNote} to inject ${fix.header}. Deploying to CloudFront edge nodes (takes 3-5 mins).`
     };
 
   } catch (err) {

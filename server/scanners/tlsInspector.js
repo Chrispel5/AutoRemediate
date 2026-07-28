@@ -45,7 +45,7 @@ function inspect(domain) {
         resolve({
           id: 'tls-warn',
           name: 'TLS Certificate Near Expiry',
-          severity: 'WARN',
+          severity: 'MODERATE',
           status: 'FAIL',
           evidence: `Expires on: ${cert.valid_to} (${daysRemaining} days remaining)`,
           description: 'The certificate expires in less than 30 days. Renew immediately to prevent visitor service warnings.'

@@ -17,7 +17,12 @@ async function check(domain) {
     /error on line \d+/i,
     /thrown in \/[a-z0-9_\-\.\/]+ on line \d+/i,
     /call to undefined function/i,
-    /xdebug/i
+    /xdebug/i,
+    /Traceback \(most recent call last\)/,    // Python
+    /java\.lang\.[a-zA-Z]*Exception/,         // Java
+    /at (com|org)\.[a-zA-Z0-9_.]+/,           // Java stack frames
+    /System\.[a-zA-Z.]*Exception/,            // .NET
+    /NullReferenceException/                  // .NET
   ];
 
   async function checkUrl(targetUrl, context) {

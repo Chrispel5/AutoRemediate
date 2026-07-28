@@ -33,7 +33,7 @@ window.dashboard = (() => {
     details.innerHTML = `
       <div class="infra-item">
         <span class="infra-label">Target host</span>
-        <span class="infra-value">${target}</span>
+        <span class="infra-value">${escapeHtml(target)}</span>
       </div>
       <div class="infra-item">
         <span class="infra-label">Web infrastructure</span>
@@ -102,6 +102,8 @@ window.dashboard = (() => {
       return {
         readiness: "verified",
         label: "Verified",
+        riskLevel: "low",
+        requires: [],
         canAutoFix: false,
         canExportTerraform: isTerraformable
       };
@@ -110,6 +112,8 @@ window.dashboard = (() => {
       return {
         readiness: "needs_input",
         label: "Needs DKIM value",
+        riskLevel: "low",
+        requires: ["Email provider DKIM key"],
         canAutoFix: false,
         canExportTerraform: false
       };
@@ -119,6 +123,8 @@ window.dashboard = (() => {
         return {
           readiness: "auto_fixable",
           label: "Auto-fixable",
+          riskLevel: "medium",
+          requires: ["Cloud provider API access"],
           canAutoFix: true,
           canExportTerraform: true
         };
@@ -127,6 +133,8 @@ window.dashboard = (() => {
         return {
           readiness: "auto_fixable",
           label: "Auto-fixable",
+          riskLevel: "medium",
+          requires: ["DNS write access"],
           canAutoFix: true,
           canExportTerraform: true
         };
@@ -135,6 +143,8 @@ window.dashboard = (() => {
         return {
           readiness: "generate_patch",
           label: "Generate patch",
+          riskLevel: "medium",
+          requires: ["Server configuration access"],
           canAutoFix: false,
           canExportTerraform: false
         };
@@ -143,6 +153,8 @@ window.dashboard = (() => {
     return {
       readiness: "manual",
       label: "Manual Fix",
+      riskLevel: "medium",
+      requires: ["Administrator access"],
       canAutoFix: false,
       canExportTerraform: false
     };
@@ -169,6 +181,7 @@ window.dashboard = (() => {
     document.getElementById('stat-critical').textContent = `${counts.CRITICAL} Critical`;
     document.getElementById('stat-high').textContent = `${counts.HIGH} High`;
     document.getElementById('stat-moderate').textContent = `${counts.MODERATE} Moderate`;
+    document.getElementById('stat-low').textContent = `${counts.LOW} Low`;
     document.getElementById('stat-pass').textContent = `${counts.PASS} Passed / Fixed`;
 
     // Sort findings: FAIL (Critical -> High -> Moderate -> Low) then PASS
@@ -204,7 +217,7 @@ window.dashboard = (() => {
       let complianceBadges = '';
       if (finding.compliance && finding.compliance.length > 0) {
         complianceBadges = `<div class="compliance-container">` + 
-          finding.compliance.map(c => `<span class="badge-compliance">${c.framework} ${c.control}</span>`).join('') + 
+          finding.compliance.map(c => `<span class="badge-compliance">${escapeHtml(c.framework)} ${escapeHtml(c.control)}</span>`).join('') + 
           `</div>`;
       }
 
@@ -232,7 +245,7 @@ window.dashboard = (() => {
       // Remediation proof banner
       const proofBanner = finding.remediationDetails
         ? `<div class="remediation-proof" style="margin-top: 10px;">
-             <strong>Fix Verified:</strong> ${finding.remediationDetails.verification}
+             <strong>Fix Verified:</strong> ${escapeHtml(finding.remediationDetails.verification)}
            </div>`
         : '';
 
@@ -241,10 +254,10 @@ window.dashboard = (() => {
           <div class="finding-title-row">
             ${severityBadge}
             ${readinessBadge}
-            <span class="finding-name-text">${finding.name}</span>
+            <span class="finding-name-text">${escapeHtml(finding.name)}</span>
           </div>
           <div class="finding-desc-text">
-            ${finding.description || 'No vulnerability description provided.'}
+            ${escapeHtml(finding.description || 'No vulnerability description provided.')}
             ${proofBanner}
             ${complianceBadges}
           </div>
@@ -267,12 +280,17 @@ window.dashboard = (() => {
         if (finding.status === 'FAIL') {
           scannerCard.className = 'scanner-card fail';
           scannerCard.querySelector('.scanner-card-status').textContent = 'Vulnerable';
-        } else if (scannerCard.className !== 'scanner-card fail') {
+        } else if (!scannerCard.classList.contains('fail')) {
           scannerCard.className = 'scanner-card pass';
           scannerCard.querySelector('.scanner-card-status').textContent = 'Secure';
         }
       }
     });
+
+    // Sweep any scanner cards left in the scanning state (no finding produced)
+    if (window.scanner && window.scanner.finishGrid) {
+      window.scanner.finishGrid();
+    }
   }
 
   function toggleEvidence(btn) {
@@ -315,6 +333,7 @@ window.dashboard = (() => {
   return {
     renderInfra,
     renderFindings,
-    toggleEvidence
+    toggleEvidence,
+    getFallbackRemediation
   };
 })();

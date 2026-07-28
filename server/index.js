@@ -1,8 +1,10 @@
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fetch = require('node-fetch');
 const { normalizeDomain, isRecordNameAllowed } = require('./utils/domain');
 const { createRateLimiter } = require('./utils/rateLimit');
 
@@ -46,6 +48,16 @@ app.use('/api', apiLimiter);
 
 // In-memory databases
 const scanCache = new Map();
+const SCAN_CACHE_MAX = 100;
+
+// Cap the cache by evicting the oldest entry (Map preserves insertion order)
+function cacheScan(scanId, scanResult) {
+  if (scanCache.size >= SCAN_CACHE_MAX && !scanCache.has(scanId)) {
+    const oldestKey = scanCache.keys().next().value;
+    scanCache.delete(oldestKey);
+  }
+  scanCache.set(scanId, scanResult);
+}
 let cfConnection = {
   connected: false,
   token: null,
@@ -197,7 +209,7 @@ app.post('/api/scan', async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
-  const scanId = 'scan_' + Date.now();
+  const scanId = 'scan_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
   const startTime = new Date();
 
   // Run all scanners in parallel using Promise.allSettled
@@ -248,13 +260,28 @@ app.post('/api/scan', async (req, res) => {
           const policyMatch = xml.match(/<ResponseHeadersPolicyId>([^<]+)<\/ResponseHeadersPolicyId>/);
           if (policyMatch && policyMatch[1]) {
             const policyId = policyMatch[1];
-            // Mark header findings as PASS since policy is active on CloudFront
+            // Don't blanket-PASS on an attached policy ID: re-fetch the live
+            // site and only flip findings whose header is actually served.
+            const headerForFinding = {
+              'csp-missing': 'content-security-policy',
+              'hsts-missing': 'strict-transport-security',
+              'xframe-missing': 'x-frame-options',
+              'xcto-missing': 'x-content-type-options',
+              'referrer-missing': 'referrer-policy',
+              'permissions-missing': 'permissions-policy'
+            };
+            const liveResp = await fetch(`https://${domain}`, {
+              method: 'GET',
+              timeout: 10000,
+              headers: { 'User-Agent': 'AutoRemediate-Scanner/1.0' }
+            });
             findings.forEach(f => {
-              if (['csp-missing', 'hsts-missing', 'x-frame-missing', 'x-content-type-missing', 'referrer-policy-missing', 'permissions-policy-missing'].includes(f.id)) {
+              const headerName = headerForFinding[f.id];
+              if (headerName && liveResp.headers.get(headerName)) {
                 f.status = 'PASS';
                 f.severity = 'PASS';
-                f.evidence = `CloudFront Response Headers Policy Active (Policy ID: ${policyId})`;
-                f.name = f.name.replace('Missing', 'Active').replace('Missing / Weak', 'Configured');
+                f.evidence = `CloudFront Response Headers Policy Active (Policy ID: ${policyId}) — ${headerName} present in live response`;
+                f.name = f.name.replace('Missing / Weak', 'Configured').replace('Missing', 'Active');
               }
             });
           }
@@ -274,7 +301,7 @@ app.post('/api/scan', async (req, res) => {
       findings: enriched
     };
 
-    scanCache.set(scanId, scanResult);
+    cacheScan(scanId, scanResult);
     return res.json(scanResult);
   } catch (err) {
     return res.status(500).json({ error: `Scan execution failed: ${err.message}` });
@@ -302,7 +329,7 @@ app.post('/api/terraform/export', (req, res) => {
     return res.status(404).json({ error: 'Finding not found in this scan session' });
   }
 
-  if (!finding.fix) {
+  if (!finding.fix && finding.status !== 'PASS') {
     return res.status(400).json({ error: 'No Terraform export available for this finding.' });
   }
 
@@ -352,45 +379,59 @@ app.post('/api/remediate', async (req, res) => {
 
   try {
     let remediationResult;
+    // An explicitly requested provider ('cloudflare' or 'aws') is honored
+    // strictly; only fall through to the other provider when none was
+    // requested (or 'both' was requested).
+    const explicitProvider = provider && provider !== 'both' ? provider : null;
     const targetProvider = provider || (awsConnection.connected && !cfConnection.connected ? 'aws' : 'cloudflare');
 
     if (finding.fix.type === 'dns' || finding.fix.type === 'dns-update' || finding.fix.type === 'dns-delete') {
       if ((targetProvider === 'cloudflare' || targetProvider === 'both') && cfConnection.connected) {
-        const connector = new cloudflareConnector(cfConnection.token);
-        let zoneId = cfConnection.zoneMap.get(scan.target);
-        if (!zoneId) {
-          zoneId = await connector.getZoneId(scan.target);
-          cfConnection.zoneMap.set(scan.target, zoneId);
+        try {
+          const connector = new cloudflareConnector(cfConnection.token);
+          let zoneId = cfConnection.zoneMap.get(scan.target);
+          if (!zoneId) {
+            zoneId = await connector.getZoneId(scan.target);
+            cfConnection.zoneMap.set(scan.target, zoneId);
+          }
+          remediationResult = await dnsRemediator.applyFix(connector, zoneId, scan.target, finding);
+        } catch (cfErr) {
+          remediationResult = { success: false, error: cfErr.message };
         }
-        remediationResult = await dnsRemediator.applyFix(connector, zoneId, scan.target, finding);
       }
       
-      if ((targetProvider === 'aws' || targetProvider === 'both' || !remediationResult) && awsConnection.connected) {
+      if ((targetProvider === 'aws' || targetProvider === 'both' || (!explicitProvider && (!remediationResult || !remediationResult.success))) && awsConnection.connected) {
         const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region, awsConnection.sessionToken);
         const awsResult = await route53Remediator.applyFix(awsConn, scan.target, finding);
-        if (remediationResult && awsResult.success) {
-          remediationResult.verification += ` | AWS Route 53 DNS record updated.`;
-        } else {
+        if (remediationResult && remediationResult.success && awsResult.success) {
+          // Both providers applied the fix — append the AWS verification
+          remediationResult.verification += ` | ${awsResult.verification}`;
+        } else if (!remediationResult || !remediationResult.success) {
+          // Never overwrite a success with a failure
           remediationResult = awsResult;
         }
       }
     } else if (finding.fix.type === 'cloudflare-rule') {
       if ((targetProvider === 'cloudflare' || targetProvider === 'both') && cfConnection.connected) {
-        const connector = new cloudflareConnector(cfConnection.token);
-        let zoneId = cfConnection.zoneMap.get(scan.target);
-        if (!zoneId) {
-          zoneId = await connector.getZoneId(scan.target);
-          cfConnection.zoneMap.set(scan.target, zoneId);
+        try {
+          const connector = new cloudflareConnector(cfConnection.token);
+          let zoneId = cfConnection.zoneMap.get(scan.target);
+          if (!zoneId) {
+            zoneId = await connector.getZoneId(scan.target);
+            cfConnection.zoneMap.set(scan.target, zoneId);
+          }
+          remediationResult = await headerRemediator.applyFix(connector, zoneId, scan.target, finding);
+        } catch (cfErr) {
+          remediationResult = { success: false, error: cfErr.message };
         }
-        remediationResult = await headerRemediator.applyFix(connector, zoneId, scan.target, finding);
       }
 
-      if ((targetProvider === 'aws' || targetProvider === 'both' || !remediationResult) && awsConnection.connected) {
+      if ((targetProvider === 'aws' || targetProvider === 'both' || (!explicitProvider && (!remediationResult || !remediationResult.success))) && awsConnection.connected) {
         const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region, awsConnection.sessionToken);
         const awsResult = await cloudfrontRemediator.applyFix(awsConn, scan.target, finding);
-        if (remediationResult && awsResult.success) {
+        if (remediationResult && remediationResult.success && awsResult.success) {
           remediationResult.verification += ` | ${awsResult.verification}`;
-        } else {
+        } else if (!remediationResult || !remediationResult.success) {
           remediationResult = awsResult;
         }
       }
@@ -405,7 +446,7 @@ app.post('/api/remediate', async (req, res) => {
       scan.findings[findingIndex].remediationDetails = remediationResult;
       
       // Update scanCache
-      scanCache.set(scanId, scan);
+      cacheScan(scanId, scan);
       return res.json({ success: true, finding: scan.findings[findingIndex] });
     } else {
       let errText = remediationResult ? remediationResult.error : 'Unknown error during remediation';
@@ -544,7 +585,7 @@ app.get('/api/demo', (req, res) => {
         }
       },
       {
-        id: 'xframe-present',
+        id: 'xframe',
         name: 'Clickjacking Protection Active',
         severity: 'PASS',
         status: 'PASS',
@@ -564,7 +605,7 @@ app.get('/api/demo', (req, res) => {
 
   demoData.findings = applyRemediationMetadata(applyCompliance(demoData.findings), demoData.target);
 
-  scanCache.set(scanId, demoData);
+  cacheScan(scanId, demoData);
   return res.json(demoData);
 });
 

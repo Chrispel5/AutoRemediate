@@ -45,22 +45,7 @@ window.remediation = (() => {
     URL.revokeObjectURL(url);
   });
 
-  // Client-Side Fallback Fallback Templates for Static Environment (GitHub Pages)
-  const COMPLIANCE_MAP = {
-    "spf-missing": [{ framework: "NIST", control: "SP 800-177 Email Security" }, { framework: "SOC 2", control: "CC6.1" }],
-    "dmarc-missing": [{ framework: "NIST", control: "SP 800-177 Email Security" }, { framework: "SOC 2", control: "CC6.1" }],
-    "dkim-missing": [{ framework: "NIST", control: "SP 800-177 Email Security" }, { framework: "SOC 2", control: "CC6.1" }],
-    "csp-missing": [{ framework: "OWASP", control: "A05:2021 Security Misconfiguration" }, { framework: "OWASP", control: "A03:2021 Injection" }, { framework: "SOC 2", control: "CC6.6" }],
-    "hsts-missing": [{ framework: "OWASP", control: "A02:2021 Cryptographic Failures" }, { framework: "PCI-DSS", control: "4.2.1" }],
-    "xframe-missing": [{ framework: "OWASP", control: "A05:2021 Security Misconfiguration" }],
-    "xcto-missing": [{ framework: "OWASP", control: "A05:2021 Security Misconfiguration" }],
-    "server-version-exposed": [{ framework: "OWASP", control: "A05:2021 Security Misconfiguration" }, { framework: "SOC 2", control: "CC7.1" }],
-    "cookie-insecure": [{ framework: "OWASP", control: "A01:2021 Broken Access Control" }, { framework: "PCI-DSS", control: "6.4.3" }],
-    "error-disclosure": [{ framework: "OWASP", control: "A05:2021 Security Misconfiguration" }, { framework: "SOC 2", control: "CC7.2" }],
-    "subdomain-takeover": [{ framework: "OWASP", control: "A05:2021 Security Misconfiguration" }, { framework: "NIST", control: "CM-8 Asset Management" }],
-    "stale-txt-token": [{ framework: "NIST", control: "CM-8 Asset Management" }]
-  };
-
+  // Client-Side Fallback Templates for Static Environment (GitHub Pages)
   const COPILOT_TEMPLATES = {
     "spf-missing": {
       whatIsWrong: "The domain does not publish an SPF (Sender Policy Framework) record.",
@@ -425,12 +410,12 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
     title.textContent = finding.name;
 
     // Build fallback copilot data if missing
-    const target = window.currentScanData ? window.currentScanData.target : (window.currentScanId ? window.currentScanId.target : 'example.com');
+    const target = (window.currentScanData && window.currentScanData.target) || 'example.com';
     if (!finding.copilot) {
       finding.copilot = clientSideBuildCopilot(finding, target);
     }
     if (!finding.remediation) {
-      // getFallbackRemediation is globally declared in dashboard.js or we duplicate here
+      // getFallbackRemediation is exported from dashboard.js
       finding.remediation = window.dashboard.getFallbackRemediation ? window.dashboard.getFallbackRemediation(finding) : {
         readiness: "manual",
         label: "Manual",
@@ -443,6 +428,7 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
 
     const cop = finding.copilot;
     const rem = finding.remediation;
+    const riskLevel = rem.riskLevel || 'medium';
 
     let actionButtons = ``;
     if (rem.canAutoFix) {
@@ -485,35 +471,35 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
       <div class="copilot-section">
         <strong>Fix Readiness Status</strong>
         <p>Readiness: <span class="badge-readiness ${rem.readiness}">${rem.label}</span></p>
-        <p>Operational Risk: <span style="font-weight:700; color: ${rem.riskLevel === 'high' ? 'var(--critical)' : (rem.riskLevel === 'medium' ? 'var(--moderate)' : 'var(--pass)')};">${rem.riskLevel.toUpperCase()}</span></p>
-        <p>Required Access: <code>${rem.requires && rem.requires.length > 0 ? rem.requires.join(', ') : 'None'}</code></p>
+        <p>Operational Risk: <span style="font-weight:700; color: ${riskLevel === 'high' ? 'var(--critical)' : (riskLevel === 'medium' ? 'var(--moderate)' : 'var(--pass)')};">${riskLevel.toUpperCase()}</span></p>
+        <p>Required Access: <code>${rem.requires && rem.requires.length > 0 ? escapeHtml(rem.requires.join(', ')) : 'None'}</code></p>
       </div>
 
       <div class="copilot-section">
         <strong>What is wrong?</strong>
-        <p>${cop.whatIsWrong}</p>
+        <p>${escapeHtml(cop.whatIsWrong)}</p>
       </div>
 
       <div class="copilot-section">
         <strong>Why it matters</strong>
-        <p>${cop.whyItMatters}</p>
+        <p>${escapeHtml(cop.whyItMatters)}</p>
       </div>
 
       ${exactChangeHtml}
 
       <div class="copilot-section">
         <strong>Operational Risk & What Could Break</strong>
-        <p>${cop.whatCouldBreak}</p>
+        <p>${escapeHtml(cop.whatCouldBreak)}</p>
       </div>
 
       <div class="copilot-section">
         <strong>Verification Plan</strong>
-        <p>${cop.verificationPlan}</p>
+        <p>${escapeHtml(cop.verificationPlan)}</p>
       </div>
 
       <div class="copilot-section">
         <strong>Rollback Strategy</strong>
-        <p>${cop.rollbackPlan}</p>
+        <p>${escapeHtml(cop.rollbackPlan)}</p>
       </div>
 
       <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
@@ -548,8 +534,8 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
     const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
     const scanId = window.currentScanId;
 
-    if (isStaticEnv) {
-      // Simulate/Generate completely client-side in static deployment fallback
+    if (isStaticEnv || window.scanIsLocal) {
+      // Simulate/Generate completely client-side (static deployment or backend-unknown local scan)
       setTimeout(() => {
         const target = window.currentScanData ? window.currentScanData.target : 'example.com';
         activeTfCode = clientSideGenerateTerraform(finding, target, provider);
@@ -594,7 +580,7 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
       ? (window.connectedProviders.cloudflare || window.connectedProviders.aws)
       : window.isCloudflareConnected;
 
-    if (!isStaticEnv && !hasProvider) {
+    if (!isStaticEnv && !window.scanIsLocal && !hasProvider) {
       alert('Cloud provider connection required to apply auto-remediation. Please connect Cloudflare or AWS in Settings.');
       const settingsModal = document.getElementById('settings-modal');
       if (settingsModal) settingsModal.classList.remove('hidden');
@@ -604,10 +590,13 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
     const providerLabel = window.connectedProviders && window.connectedProviders.aws && !window.connectedProviders.cloudflare
       ? 'AWS API'
       : (window.connectedProviders && window.connectedProviders.cloudflare ? 'Cloudflare API' : 'Cloudflare/AWS API');
+    const provider = window.connectedProviders && window.connectedProviders.aws && !window.connectedProviders.cloudflare
+      ? 'aws'
+      : 'cloudflare';
     const verifyConfirm = confirm(`Are you sure you want to apply this auto-remediation rule via ${providerLabel}?`);
     if (!verifyConfirm) return;
 
-    if (isStaticEnv) {
+    if (isStaticEnv || window.scanIsLocal) {
       // Simulate API call and verification latency
       const targetBtn = document.querySelector(`[onclick*="window.remediation.apply('${scanId}', '${findingId}')"]`);
       if (targetBtn) {
@@ -625,16 +614,13 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
 
       alert(`Vulnerability successfully auto-remediated and verified via ${providerLabel}!`);
       
-      const card = document.querySelector(`[onclick*="'${findingId}'"]`);
-      if (card) {
-        const findingCard = card.closest('.finding-card');
-        if (findingCard) {
-          findingCard.className = 'finding-card pass';
-          const badge = findingCard.querySelector('.severity-badge');
-          if (badge) { badge.className = 'severity-badge pass'; badge.textContent = 'PASS'; }
-          const actions = findingCard.querySelector('.finding-actions');
-          if (actions) { actions.innerHTML = '<span style="color:var(--pass);font-weight:700;">Fixed</span>'; }
-        }
+      // Mark the stored finding as fixed and re-render so badges stay consistent
+      const localFinding = window.currentFindings && window.currentFindings.find(f => f.id === findingId);
+      if (localFinding) {
+        localFinding.status = 'PASS';
+      }
+      if (window.currentFindings) {
+        window.dashboard.renderFindings(window.currentFindings, window.currentScanId);
       }
       closeCopilot();
       return;
@@ -644,24 +630,24 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
       const response = await fetch('/api/remediate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scanId, findingId })
+        body: JSON.stringify({ scanId, findingId, provider })
       });
 
       const data = await response.json();
       if (response.ok && data.success) {
         alert('Vulnerability successfully auto-remediated and verified!');
         
-        // Update the specific finding card in-place using backend response
-        const card = document.querySelector(`[onclick*="'${findingId}'"]`);
-        if (card) {
-          const findingCard = card.closest('.finding-card');
-          if (findingCard) {
-            findingCard.className = 'finding-card pass';
-            const badge = findingCard.querySelector('.severity-badge');
-            if (badge) { badge.className = 'severity-badge pass'; badge.textContent = 'PASS'; }
-            const actions = findingCard.querySelector('.finding-actions');
-            if (actions) { actions.innerHTML = '<span style="color:var(--pass);font-weight:700;">Fixed</span>'; }
+        // Merge the remediated finding returned by the backend into the stored
+        // findings (same array referenced by window.currentScanData.findings)
+        if (data.finding && window.currentFindings) {
+          const stored = window.currentFindings.find(f => f.id === data.finding.id);
+          if (stored) {
+            Object.assign(stored, data.finding);
           }
+        }
+        // Re-render finding cards, severity stat badges and scanner grid
+        if (window.currentFindings) {
+          window.dashboard.renderFindings(window.currentFindings, window.currentScanId);
         }
         closeCopilot();
       } else {
@@ -674,7 +660,7 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
 
   function copy(btn) {
     const pre = btn.parentElement.querySelector('pre');
-    navigator.clipboard.writeText(pre.textContent.replace('Copy', '').trim());
+    navigator.clipboard.writeText(pre.textContent.trim());
     btn.textContent = 'Copied!';
     setTimeout(() => {
       btn.textContent = 'Copy';

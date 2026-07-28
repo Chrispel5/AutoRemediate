@@ -443,7 +443,19 @@ button {
 .stat-badge.critical { background: rgba(255, 71, 87, 0.1); color: var(--critical); border: 1px solid rgba(255, 71, 87, 0.2); }
 .stat-badge.high { background: rgba(255, 107, 53, 0.1); color: var(--high); border: 1px solid rgba(255, 107, 53, 0.2); }
 .stat-badge.moderate { background: rgba(255, 165, 2, 0.1); color: var(--moderate); border: 1px solid rgba(255, 165, 2, 0.2); }
+.stat-badge.low { background: rgba(95, 156, 247, 0.1); color: var(--low); border: 1px solid rgba(95, 156, 247, 0.2); }
 .stat-badge.pass { background: rgba(46, 213, 115, 0.1); color: var(--pass); border: 1px solid rgba(46, 213, 115, 0.2); }
+
+/* Remediation proof banner (shown on verified fixes) */
+.remediation-proof {
+  margin-top: 10px;
+  padding: 8px;
+  background: rgba(46, 213, 115, 0.08);
+  border-left: 3px solid var(--pass);
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: #a8e6cf;
+}
 
 /* Findings List & Cards */
 .findings-list {
@@ -881,3 +893,116 @@ button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+
+/* ==========================================================================
+   Theme refresh — flat professional palette (overrides everything above)
+   ========================================================================== */
+:root {
+  --bg-color: #0d1117;
+  --panel-bg: #161b22;
+  --border-color: #30363d;
+  --primary: #58a6ff;
+  --primary-glow: transparent;
+  --critical: #f85149;
+  --critical-glow: transparent;
+  --high: #e3812a;
+  --high-glow: transparent;
+  --moderate: #d29922;
+  --moderate-glow: transparent;
+  --low: #58a6ff;
+  --low-glow: transparent;
+  --pass: #3fb950;
+  --pass-glow: transparent;
+  --text-main: #e6edf3;
+  --text-muted: #8b949e;
+}
+
+/* Kill decorative grid */
+.grid-bg { display: none; }
+
+/* Header */
+#app-header { background: #0d1117; backdrop-filter: none; }
+.logo h1 {
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: var(--text-main);
+  font-weight: 700;
+}
+.version-badge {
+  background: rgba(88, 166, 255, 0.1);
+  border-color: rgba(88, 166, 255, 0.25);
+}
+
+/* Buttons — flat, no glow, no pulse */
+.btn-primary { box-shadow: none; }
+.btn-primary:hover { background: #4c94e6; transform: none; }
+.btn-scan { box-shadow: none; animation: none; }
+.btn-scan:hover { background: #4c94e6; }
+.btn-fix:hover { background: #4c94e6; }
+
+/* Hero — plain text, square input */
+.gradient-text {
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: var(--primary);
+}
+.hero { padding: 64px 20px 48px; }
+.scan-input-group {
+  background: #161b22;
+  border-radius: 8px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.scan-input-group:focus-within { border-color: var(--primary); }
+.btn-scan { border-radius: 6px; }
+
+/* Cards — solid surfaces, no glass blur */
+.glass-card {
+  background: var(--panel-bg);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.finding-card { backdrop-filter: none; animation: none; }
+.scanner-card { background: #161b22; }
+.scanner-card.scanning { box-shadow: none; }
+.scanner-card.pass { background: rgba(63, 185, 80, 0.06); }
+.scanner-card.fail { background: rgba(248, 81, 73, 0.06); }
+
+/* Section headers — neutral, not accent-colored */
+.section h3 { color: var(--text-main); }
+
+/* Status dots — no glow */
+.status-indicator.disconnected::before,
+.status-indicator.connected::before { box-shadow: none; }
+
+/* Severity badges — flat fills */
+.severity-badge.critical,
+.severity-badge.high,
+.severity-badge.moderate,
+.severity-badge.low,
+.severity-badge.pass { box-shadow: none; }
+
+/* Panels & modals — opaque, no blur */
+.remediation-panel { background: #161b22; backdrop-filter: none; box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4); }
+.remediation-header h3, .modal-content h2 { color: var(--text-main); }
+.modal { background: rgba(1, 4, 9, 0.75); backdrop-filter: none; }
+
+/* Code & evidence blocks */
+.evidence-content, .code-container pre, .terraform-code-container pre {
+  background: #0d1117;
+  color: #c9d1d9;
+}
+.diff-view { background: #0d1117; border-color: var(--border-color); }
+
+/* Compliance & accent chips */
+.badge-compliance {
+  background: rgba(88, 166, 255, 0.08);
+  border-color: rgba(88, 166, 255, 0.2);
+}
+.copilot-section { background: #161b22; }
+.copilot-section strong { color: var(--text-muted); }
+
+/* Form fields */
+.form-group input, .terraform-provider-select { background: #0d1117; }
+.terraform-provider-select option { background: #161b22; }

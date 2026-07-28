@@ -7,7 +7,7 @@
   <meta name="description" content="Automated web security scanner and remediation engine. Scan, detect, and fix security vulnerabilities automatically.">
   <script>
     window.onerror = function(message, source, lineno, colno, error) {
-      alert("JS Error: " + message + " on line " + lineno + ":" + colno);
+      console.error("JS Error: " + message + " on line " + lineno + ":" + colno, error);
       return false;
     };
   </script>
@@ -52,7 +52,7 @@
       <div class="form-group">
         <label>AWS IAM Role ARN (AssumeRole - Recommended)</label>
         <input type="text" id="aws-role-arn" placeholder="arn:aws:iam::123456789012:role/AutoRemediate-Exec-Role">
-        <small style="color: #00d4ff;">Enter your IAM Role ARN to assume role automatically without static keys</small>
+        <small style="color: #8b949e;">Enter your IAM Role ARN to assume role automatically without static keys</small>
       </div>
       <div class="form-group">
         <label>AWS Access Key ID (Optional if Role ARN used)</label>
@@ -65,7 +65,7 @@
       <div class="form-group">
         <label>AWS Session Token (For Temporary SSO / Google Federated Logins)</label>
         <input type="password" id="aws-session-token" placeholder="Paste temporary session token from AWS Console (IQoJb...)">
-        <small style="color: #00d4ff;">Allows connecting via temporary Google SSO / Identity Center browser sessions without static keys</small>
+        <small style="color: #8b949e;">Allows connecting via temporary Google SSO / Identity Center browser sessions without static keys</small>
       </div>
       <div class="form-group">
         <label>AWS Region</label>
@@ -73,7 +73,7 @@
         <small>Required for CloudFront Response Headers & Route 53 DNS auto-remediation</small>
       </div>
       <div class="modal-actions">
-        <button id="btn-connect-aws" class="btn-primary" style="background: linear-gradient(135deg, #ff9900, #ff6600);">Connect AWS</button>
+        <button id="btn-connect-aws" class="btn-primary" style="background: #d29922; color: #0d1117;">Connect AWS</button>
         <button id="btn-close-settings" class="btn-ghost">Cancel</button>
       </div>
     </div>
@@ -125,6 +125,7 @@
         <span id="stat-critical" class="stat-badge critical">0 Critical</span>
         <span id="stat-high" class="stat-badge high">0 High</span>
         <span id="stat-moderate" class="stat-badge moderate">0 Moderate</span>
+        <span id="stat-low" class="stat-badge low">0 Low</span>
         <span id="stat-pass" class="stat-badge pass">0 Pass</span>
       </div>
     </div>

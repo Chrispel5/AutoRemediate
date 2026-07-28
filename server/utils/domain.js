@@ -1,4 +1,5 @@
 const net = require('net');
+const { domainToASCII } = require('url');
 
 const DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 
@@ -27,6 +28,11 @@ function normalizeDomain(input) {
   let host = value.split(':')[0];
   if (host.startsWith('www.')) {
     host = host.slice(4);
+  }
+
+  // Convert internationalized (Unicode) domain names to punycode
+  if (/[^\x00-\x7F]/.test(host)) {
+    host = domainToASCII(host);
   }
 
   if (!isValidDomain(host)) {

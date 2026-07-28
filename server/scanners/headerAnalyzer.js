@@ -53,7 +53,7 @@ async function analyze(domain) {
         name: 'Content-Security-Policy Active',
         severity: 'PASS',
         status: 'PASS',
-        evidence: `Content-Security-Policy: ${csp.substring(0, 100)}...`,
+        evidence: `Content-Security-Policy: ${csp.length > 100 ? csp.substring(0, 100) + '...' : csp}`,
         description: 'The page implements a Content-Security-Policy header for resource lock-down.'
       });
     }
@@ -120,7 +120,7 @@ async function analyze(domain) {
         name: 'X-Content-Type-Options Header Missing',
         severity: 'MODERATE',
         status: 'FAIL',
-        evidence: 'X-Content-Type-Options: (Not present)',
+        evidence: `X-Content-Type-Options: ${xcto || '(Not present)'}`,
         description: 'Without this header, older browsers might ignore the mime type sent by the server and sniff/execute file contents.',
         fix: {
           type: 'cloudflare-rule',

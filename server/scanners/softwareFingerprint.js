@@ -4,6 +4,9 @@ async function fingerprint(domain) {
   const url = `https://${domain}`;
   const pathChecks = ['/README.md', '/CHANGELOG.md', '/changelog.txt'];
   let detectedInfo = [];
+  // Version leaks owned by THIS scanner (meta generator tags, changelogs).
+  // Header-based version disclosure is reported by headerAnalyzer instead.
+  let versionLeaks = [];
 
   try {
     // Check main response headers first
@@ -18,11 +21,13 @@ async function fingerprint(domain) {
       detectedInfo.push(`Powered-By: ${xPoweredBy}`);
     }
 
-    // HTML analysis for meta generator tags
+    // HTML analysis for meta generator tags (attributes in either order)
     const htmlText = await mainResponse.text();
-    const generatorMatch = htmlText.match(/<meta\s+name=["']generator["']\s+content=["']([^"']+)["']/i);
+    const generatorMatch = htmlText.match(/<meta[^>]*name=["']generator["'][^>]*content=["']([^"']+)["']/i)
+      || htmlText.match(/<meta[^>]*content=["']([^"']+)["'][^>]*name=["']generator["']/i);
     if (generatorMatch && generatorMatch[1]) {
       detectedInfo.push(`Meta Generator: ${generatorMatch[1]}`);
+      versionLeaks.push(`Meta Generator: ${generatorMatch[1]}`);
     }
 
     // Proactively check common paths
@@ -35,6 +40,7 @@ async function fingerprint(domain) {
           const versionMatch = content.match(/version\s*(\d+\.\d+(\.\d+)?)/i);
           if (versionMatch) {
             detectedInfo.push(`Changelog Version: ${versionMatch[1]} (found in ${path})`);
+            versionLeaks.push(`Changelog Version: ${versionMatch[1]} (found in ${path})`);
           }
         }
       } catch (err) {
@@ -43,7 +49,7 @@ async function fingerprint(domain) {
     }
 
     // Determine findings based on what was detected
-    const findingsExposed = detectedInfo.some(info => /\d+\.\d+/.test(info));
+    const findingsExposed = versionLeaks.length > 0;
 
     if (findingsExposed) {
       return {
@@ -51,11 +57,11 @@ async function fingerprint(domain) {
         name: 'Outdated / Verifiable Software Stacks Exposed',
         severity: 'HIGH',
         status: 'FAIL',
-        evidence: detectedInfo.join('\n'),
-        description: 'Metadata or headers disclose specific framework, language, or system version details. This eases targeted exploit searches.',
+        evidence: versionLeaks.join('\n'),
+        description: 'Metadata or files disclose specific framework, language, or system version details. This eases targeted exploit searches.',
         fix: {
           type: 'config',
-          notes: 'Disable meta generator tags in application headers, hide PHP X-Powered-By, and anonymize Server headers in configuration.'
+          notes: 'Disable meta generator tags in application headers and remove public changelog/readme files with version markers.'
         }
       };
     }

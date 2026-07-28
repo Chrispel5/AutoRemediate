@@ -40,8 +40,17 @@ window.scanner = (() => {
     }
   }
 
+  function finishGrid() {
+    // Sweep cards whose scanner produced no finding out of the scanning state
+    document.querySelectorAll('.scanner-card.scanning').forEach(card => {
+      card.className = 'scanner-card idle';
+      card.querySelector('.scanner-card-status').textContent = 'No Data';
+    });
+  }
+
   return {
     initGrid,
-    runVisualPipeline
+    runVisualPipeline,
+    finishGrid
   };
 })();

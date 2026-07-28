@@ -68,19 +68,24 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       // Fallback for static demo mode without backend
-      window.connectedProviders.cloudflare = true;
-      cloudflareStatus.textContent = 'Cloudflare: Connected (Demo)';
-      cloudflareStatus.classList.remove('disconnected');
-      cloudflareStatus.classList.add('connected');
-      settingsModal.classList.add('hidden');
-      window.isCloudflareConnected = true;
-      alert('Connected (Local Simulation mode active).');
-      if (currentScanData) {
-        window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
+      const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+      if (isStaticEnv) {
+        window.connectedProviders.cloudflare = true;
+        cloudflareStatus.textContent = 'Cloudflare: Connected (Demo)';
+        cloudflareStatus.classList.remove('disconnected');
+        cloudflareStatus.classList.add('connected');
+        settingsModal.classList.add('hidden');
+        window.isCloudflareConnected = true;
+        alert('Connected (Local Simulation mode active).');
+        if (currentScanData) {
+          window.dashboard.renderFindings(currentScanData.findings, currentScanData.scanId);
+        }
+      } else {
+        alert(`Cloudflare Connection Error: ${err.message}`);
       }
     } finally {
       btnConnect.disabled = false;
-      btnConnect.textContent = 'Connect';
+      btnConnect.textContent = 'Connect Cloudflare';
     }
   });
 
@@ -118,7 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await response.json();
       if (response.ok && data.success) {
         window.connectedProviders.aws = true;
-        window.isCloudflareConnected = true;
+        window.isAwsConnected = true;
         awsStatus.textContent = roleArn ? 'AWS: Connected (IAM Role)' : 'AWS: Connected';
         awsStatus.classList.remove('disconnected');
         awsStatus.classList.add('connected');
@@ -134,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
       if (isStaticEnv) {
         window.connectedProviders.aws = true;
-        window.isCloudflareConnected = true;
+        window.isAwsConnected = true;
         awsStatus.textContent = roleArn ? 'AWS: Connected (Role Demo)' : 'AWS: Connected (Demo)';
         awsStatus.classList.remove('disconnected');
         awsStatus.classList.add('connected');
@@ -199,6 +204,10 @@ document.addEventListener('DOMContentLoaded', () => {
           currentScanData = await runClientSideScan(target);
         }
       }
+
+      // Expose scan data globally and flag scans unknown to the backend
+      window.currentScanData = currentScanData;
+      window.scanIsLocal = typeof currentScanData.scanId === 'string' && currentScanData.scanId.indexOf('scan_local_') === 0;
       
       // Update UI panels
       document.getElementById('scan-progress').classList.add('hidden');
@@ -246,6 +255,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
+      // Expose scan data globally and flag scans unknown to the backend
+      window.currentScanData = currentScanData;
+      window.scanIsLocal = typeof currentScanData.scanId === 'string' && currentScanData.scanId.indexOf('scan_local_') === 0;
+
       document.getElementById('scan-progress').classList.add('hidden');
       document.getElementById('infra-panel').classList.remove('hidden');
       document.getElementById('findings-section').classList.remove('hidden');
@@ -264,7 +277,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Handle Export HTML Report
   btnExport.addEventListener('click', () => {
-    if (!currentScanData) return;
+    if (!currentScanData) {
+      alert('Please run a target scan or toggle demo mode first.');
+      return;
+    }
     window.report.export(currentScanData.scanId, currentScanData);
   });
 

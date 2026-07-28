@@ -5,9 +5,16 @@ async function analyze(domain) {
   const findings = [];
 
   try {
-    const response = await fetch(url, { method: 'GET', timeout: 5000 });
-    // Note: Node-fetch gets multiple headers as an array if there are multiple cookies
-    const cookieHeaders = response.headers.raw()['set-cookie'] || [];
+    // node-fetch follows redirects, so Set-Cookie headers on an initial 30x
+    // response would be missed — inspect the first hop with redirect:'manual'.
+    const firstResponse = await fetch(url, { method: 'GET', timeout: 5000, redirect: 'manual' });
+    let cookieHeaders = firstResponse.headers.raw()['set-cookie'] || [];
+
+    if (firstResponse.status >= 300 && firstResponse.status < 400 && firstResponse.headers.get('location')) {
+      const response = await fetch(url, { method: 'GET', timeout: 5000 });
+      const laterCookies = response.headers.raw()['set-cookie'] || [];
+      cookieHeaders = [...new Set([...cookieHeaders, ...laterCookies])];
+    }
 
     if (cookieHeaders.length === 0) {
       return {

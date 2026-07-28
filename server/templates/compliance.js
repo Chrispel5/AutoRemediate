@@ -44,6 +44,32 @@ const COMPLIANCE_MAP = {
   ],
   "stale-txt-token": [
     { framework: "NIST", control: "CM-8 Asset Management" }
+  ],
+  "referrer-missing": [
+    { framework: "OWASP", control: "A05:2021 Security Misconfiguration" }
+  ],
+  "permissions-missing": [
+    { framework: "OWASP", control: "A05:2021 Security Misconfiguration" }
+  ],
+  "xpoweredby-exposed": [
+    { framework: "OWASP", control: "A05:2021 Security Misconfiguration" },
+    { framework: "SOC 2", control: "CC7.1" }
+  ],
+  "tls-expired": [
+    { framework: "OWASP", control: "A02:2021 Cryptographic Failures" },
+    { framework: "PCI-DSS", control: "4.2.1" }
+  ],
+  "tls-warn": [
+    { framework: "OWASP", control: "A02:2021 Cryptographic Failures" },
+    { framework: "PCI-DSS", control: "4.2.1" }
+  ],
+  "tls-missing": [
+    { framework: "OWASP", control: "A02:2021 Cryptographic Failures" },
+    { framework: "PCI-DSS", control: "4.2.1" }
+  ],
+  "mx-missing": [
+    { framework: "NIST", control: "SP 800-177 Email Security" },
+    { framework: "SOC 2", control: "CC6.1" }
   ]
 };
 

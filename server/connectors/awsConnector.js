@@ -14,6 +14,11 @@ class AWSConnector {
     const datetime = new Date().toISOString().replace(/[:\-]|\.\d{3}/g, '');
     const date = datetime.substr(0, 8);
 
+    // Route53, CloudFront, and the global STS endpoint are global services:
+    // they must be signed against us-east-1 regardless of the configured region.
+    const signingRegion = (service === 'route53' || service === 'cloudfront' ||
+      (service === 'sts' && host === 'sts.amazonaws.com')) ? 'us-east-1' : this.region;
+
     const signingHeaders = {};
     Object.keys(headers).forEach((key) => {
       signingHeaders[key.toLowerCase()] = headers[key];
@@ -56,13 +61,13 @@ class AWSConnector {
 
     // 2. Create String to Sign
     const algorithm = 'AWS4-HMAC-SHA256';
-    const credentialScope = [date, this.region, service, 'aws4_request'].join('/');
+    const credentialScope = [date, signingRegion, service, 'aws4_request'].join('/');
     const canonicalRequestHash = crypto.createHash('sha256').update(canonicalRequest).digest('hex');
     const stringToSign = [algorithm, datetime, credentialScope, canonicalRequestHash].join('\n');
 
     // 3. Calculate Signature
     const kDate = crypto.createHmac('sha256', `AWS4${this.secretAccessKey}`).update(date).digest();
-    const kRegion = crypto.createHmac('sha256', kDate).update(this.region).digest();
+    const kRegion = crypto.createHmac('sha256', kDate).update(signingRegion).digest();
     const kService = crypto.createHmac('sha256', kRegion).update(service).digest();
     const kSigning = crypto.createHmac('sha256', kService).update('aws4_request').digest();
     const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
@@ -148,34 +153,88 @@ class AWSConnector {
     };
   }
 
-  // List Hosted Zones in Route 53
+  // List Hosted Zones in Route 53 (paginates via marker/IsTruncated)
   async listHostedZones() {
-    const xml = await this.request('route53', 'route53.amazonaws.com', 'GET', '/2013-04-01/hostedzone');
     const zones = [];
-    const matches = xml.matchAll(/<HostedZone>([\s\S]*?)<\/HostedZone>/g);
-    for (const match of matches) {
-      const content = match[1];
-      const idMatch = content.match(/<Id>\/hostedzone\/([^<]+)<\/Id>/);
-      const nameMatch = content.match(/<Name>([^<]+)<\/Name>/);
-      if (idMatch && nameMatch) {
-        zones.push({
-          id: idMatch[1],
-          name: nameMatch[1].replace(/\.$/, '') // strip trailing dot
-        });
+    let marker = null;
+
+    do {
+      const queryParams = marker ? { marker } : {};
+      const xml = await this.request('route53', 'route53.amazonaws.com', 'GET', '/2013-04-01/hostedzone', queryParams);
+      const matches = xml.matchAll(/<HostedZone>([\s\S]*?)<\/HostedZone>/g);
+      for (const match of matches) {
+        const content = match[1];
+        const idMatch = content.match(/<Id>\/hostedzone\/([^<]+)<\/Id>/);
+        const nameMatch = content.match(/<Name>([^<]+)<\/Name>/);
+        if (idMatch && nameMatch) {
+          zones.push({
+            id: idMatch[1],
+            name: nameMatch[1].replace(/\.$/, '') // strip trailing dot
+          });
+        }
       }
-    }
+      const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+      const nextMarkerMatch = xml.match(/<NextMarker>([^<]+)<\/NextMarker>/);
+      marker = truncated && nextMarkerMatch ? nextMarkerMatch[1] : null;
+    } while (marker);
+
     return zones;
   }
 
-  // Create or Update DNS Records in Route 53
-  async changeResourceRecordSets(hostedZoneId, action, recordName, recordType, recordValue, ttl = 300) {
+  // Fetch the existing RRset for an exact name+type (null when absent).
+  // TXT values are returned with their Route 53 quoting preserved.
+  async listResourceRecordSets(hostedZoneId, recordName, recordType) {
+    const fqdn = recordName.endsWith('.') ? recordName : `${recordName}.`;
+    const xml = await this.request(
+      'route53',
+      'route53.amazonaws.com',
+      'GET',
+      `/2013-04-01/hostedzone/${hostedZoneId}/rrset`,
+      { name: fqdn, type: recordType }
+    );
+
+    const setMatch = xml.match(/<ResourceRecordSet>([\s\S]*?)<\/ResourceRecordSet>/);
+    if (!setMatch) {
+      return null;
+    }
+
+    const content = setMatch[1];
+    const nameMatch = content.match(/<Name>([^<]+)<\/Name>/);
+    const typeMatch = content.match(/<Type>([^<]+)<\/Type>/);
+    if (!nameMatch || !typeMatch || typeMatch[1] !== recordType) {
+      return null;
+    }
+
+    const ttlMatch = content.match(/<TTL>(\d+)<\/TTL>/);
+    const values = [];
+    const valueMatches = content.matchAll(/<Value>([\s\S]*?)<\/Value>/g);
+    for (const v of valueMatches) {
+      values.push(unescapeXml(v[1].trim()));
+    }
+
+    return {
+      name: nameMatch[1].replace(/\.$/, ''),
+      type: recordType,
+      ttl: ttlMatch ? parseInt(ttlMatch[1], 10) : 300,
+      values
+    };
+  }
+
+  // Create, replace or delete DNS Records in Route 53.
+  // recordValues is the FULL list of values the RRset should carry
+  // (Route 53 UPSERT/DELETE always replaces/matches the entire RRset).
+  // TXT values must already carry Route 53 quoting (see utils/route53Txt).
+  async changeResourceRecordSets(hostedZoneId, action, recordName, recordType, recordValues, ttl = 300) {
     const path = `/2013-04-01/hostedzone/${hostedZoneId}/rrset`;
     
     // Build change batch XML payload
     // XML value escaping
     const escapedName = escapeXml(recordName.endsWith('.') ? recordName : `${recordName}.`);
     const escapedType = escapeXml(recordType);
-    const escapedValue = escapeXml(recordValue.startsWith('"') ? recordValue : `"${recordValue}"`);
+    const values = Array.isArray(recordValues) ? recordValues : [recordValues];
+    const recordsXml = values
+      .map(v => `<ResourceRecord><Value>${escapeXml(v)}</Value></ResourceRecord>`)
+      .join('\n            ');
     const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
 <ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
   <ChangeBatch>
@@ -187,9 +246,7 @@ class AWSConnector {
           <Type>${escapedType}</Type>
           <TTL>${ttl}</TTL>
           <ResourceRecords>
-            <ResourceRecord>
-              <Value>${escapedValue}</Value>
-            </ResourceRecord>
+            ${recordsXml}
           </ResourceRecords>
         </ResourceRecordSet>
       </Change>
@@ -208,35 +265,45 @@ class AWSConnector {
     );
   }
 
-  // List CloudFront Distributions
+  // List CloudFront Distributions (paginates via Marker/IsTruncated)
   async listDistributions() {
-    const xml = await this.request('cloudfront', 'cloudfront.amazonaws.com', 'GET', '/2020-05-31/distribution');
     const dists = [];
-    
-    // Parse CloudFront DistributionSummary nodes
-    const matches = xml.matchAll(/<DistributionSummary>([\s\S]*?)<\/DistributionSummary>/g);
-    for (const match of matches) {
-      const content = match[1];
-      const idMatch = content.match(/<Id>([^<]+)<\/Id>/);
-      const domainMatch = content.match(/<DomainName>([^<]+)<\/DomainName>/);
+    let marker = null;
+
+    do {
+      const queryParams = marker ? { Marker: marker } : {};
+      const xml = await this.request('cloudfront', 'cloudfront.amazonaws.com', 'GET', '/2020-05-31/distribution', queryParams);
       
-      const aliases = [];
-      const aliasesMatch = content.match(/<Aliases>([\s\S]*?)<\/Aliases>/);
-      if (aliasesMatch) {
-        const items = aliasesMatch[1].matchAll(/<CNAME>([^<]+)<\/CNAME>/g);
-        for (const item of items) {
-          aliases.push(item[1].toLowerCase());
+      // Parse CloudFront DistributionSummary nodes
+      const matches = xml.matchAll(/<DistributionSummary>([\s\S]*?)<\/DistributionSummary>/g);
+      for (const match of matches) {
+        const content = match[1];
+        const idMatch = content.match(/<Id>([^<]+)<\/Id>/);
+        const domainMatch = content.match(/<DomainName>([^<]+)<\/DomainName>/);
+        
+        const aliases = [];
+        const aliasesMatch = content.match(/<Aliases>([\s\S]*?)<\/Aliases>/);
+        if (aliasesMatch) {
+          const items = aliasesMatch[1].matchAll(/<CNAME>([^<]+)<\/CNAME>/g);
+          for (const item of items) {
+            aliases.push(item[1].toLowerCase());
+          }
+        }
+
+        if (idMatch && domainMatch) {
+          dists.push({
+            id: idMatch[1],
+            domainName: domainMatch[1],
+            aliases
+          });
         }
       }
 
-      if (idMatch && domainMatch) {
-        dists.push({
-          id: idMatch[1],
-          domainName: domainMatch[1],
-          aliases
-        });
-      }
-    }
+      const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+      const nextMarkerMatch = xml.match(/<NextMarker>([^<]+)<\/NextMarker>/);
+      marker = truncated && nextMarkerMatch ? nextMarkerMatch[1] : null;
+    } while (marker);
+
     return dists;
   }
 
@@ -261,16 +328,35 @@ class AWSConnector {
     return { xml, etag };
   }
 
-  // Create Response Headers Policy
-  async createResponseHeadersPolicy(policyName, headersConfig) {
-    const path = `/2020-05-31/response-headers-policy`;
-    
+  // Build a ResponseHeadersPolicyConfig document with elements in the order
+  // the CloudFront schema requires: config-level Comment before Name;
+  // CustomHeadersConfig before SecurityHeadersConfig; inside
+  // SecurityHeadersConfig: ContentSecurityPolicy, ContentTypeOptions,
+  // FrameOptions, ReferrerPolicy, StrictTransportSecurity, XSSProtection.
+  buildResponseHeadersPolicyXml(policyName, comment, headersConfig) {
     let securityHeadersXml = '';
     if (headersConfig.ContentSecurityPolicy) {
       securityHeadersXml += `<ContentSecurityPolicy>
         <Override>true</Override>
         <ContentSecurityPolicy>${escapeXml(headersConfig.ContentSecurityPolicy)}</ContentSecurityPolicy>
       </ContentSecurityPolicy>`;
+    }
+    if (headersConfig.ContentTypeOptions) {
+      securityHeadersXml += `<ContentTypeOptions>
+        <Override>true</Override>
+      </ContentTypeOptions>`;
+    }
+    if (headersConfig.FrameOptions) {
+      securityHeadersXml += `<FrameOptions>
+        <Override>true</Override>
+        <FrameOption>${headersConfig.FrameOptions}</FrameOption>
+      </FrameOptions>`;
+    }
+    if (headersConfig.ReferrerPolicy) {
+      securityHeadersXml += `<ReferrerPolicy>
+        <Override>true</Override>
+        <ReferrerPolicy>${escapeXml(headersConfig.ReferrerPolicy)}</ReferrerPolicy>
+      </ReferrerPolicy>`;
     }
     if (headersConfig.StrictTransportSecurity) {
       securityHeadersXml += `<StrictTransportSecurity>
@@ -279,23 +365,6 @@ class AWSConnector {
         <IncludeSubdomains>${headersConfig.StrictTransportSecurity.includeSubdomains || 'true'}</IncludeSubdomains>
         <Preload>${headersConfig.StrictTransportSecurity.preload || 'true'}</Preload>
       </StrictTransportSecurity>`;
-    }
-    if (headersConfig.FrameOptions) {
-      securityHeadersXml += `<FrameOptions>
-        <Override>true</Override>
-        <FrameOption>${headersConfig.FrameOptions}</FrameOption>
-      </FrameOptions>`;
-    }
-    if (headersConfig.ContentTypeOptions) {
-      securityHeadersXml += `<ContentTypeOptions>
-        <Override>true</Override>
-      </ContentTypeOptions>`;
-    }
-    if (headersConfig.ReferrerPolicy) {
-      securityHeadersXml += `<ReferrerPolicy>
-        <Override>true</Override>
-        <ReferrerPolicy>${escapeXml(headersConfig.ReferrerPolicy)}</ReferrerPolicy>
-      </ReferrerPolicy>`;
     }
 
     let customHeadersXml = '';
@@ -323,11 +392,17 @@ class AWSConnector {
   </SecurityHeadersConfig>`;
     }
 
-    const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+    return `<?xml version="1.0" encoding="UTF-8"?>
 <ResponseHeadersPolicyConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
-  <Name>${policyName}</Name>
-  <Comment>AutoRemediate Security Headers Policy</Comment>${fullSecurityHeadersBlock}${customHeadersXml}
+  <Comment>${escapeXml(comment || 'AutoRemediate Security Headers Policy')}</Comment>
+  <Name>${escapeXml(policyName)}</Name>${customHeadersXml}${fullSecurityHeadersBlock}
 </ResponseHeadersPolicyConfig>`;
+  }
+
+  // Create Response Headers Policy
+  async createResponseHeadersPolicy(policyName, headersConfig) {
+    const path = `/2020-05-31/response-headers-policy`;
+    const xmlBody = this.buildResponseHeadersPolicyXml(policyName, 'AutoRemediate Security Headers Policy', headersConfig);
 
     const resXml = await this.request(
       'cloudfront',
@@ -344,6 +419,41 @@ class AWSConnector {
       throw new Error(`Failed to extract Policy ID from response XML: ${resXml}`);
     }
     return idMatch[1];
+  }
+
+  // Get an existing Response Headers Policy config (XML + ETag for If-Match)
+  async getResponseHeadersPolicy(policyId) {
+    const path = `/2020-05-31/response-headers-policy/${policyId}`;
+    const headers = this.sign('GET', 'cloudfront', 'cloudfront.amazonaws.com', path, {}, {});
+    const res = await fetch(`https://cloudfront.amazonaws.com${path}`, {
+      method: 'GET',
+      headers,
+      timeout: 10000
+    });
+
+    const xml = await res.text();
+    if (!res.ok) {
+      throw new Error(`CloudFront response headers policy fetch failed: ${xml}`);
+    }
+    const etag = res.headers.get('etag');
+    return { xml, etag };
+  }
+
+  // Update an existing Response Headers Policy (versioned via If-Match ETag)
+  async updateResponseHeadersPolicy(policyId, etag, updatedConfigXml) {
+    const path = `/2020-05-31/response-headers-policy/${policyId}`;
+    return await this.request(
+      'cloudfront',
+      'cloudfront.amazonaws.com',
+      'PUT',
+      path,
+      {},
+      {
+        'Content-Type': 'application/xml',
+        'If-Match': etag
+      },
+      updatedConfigXml
+    );
   }
 
   // Update CloudFront Distribution Configuration
@@ -396,6 +506,15 @@ function escapeXml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+function unescapeXml(value) {
+  return value.toString()
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
 }
 
 module.exports = AWSConnector;

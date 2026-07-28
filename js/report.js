@@ -7,9 +7,10 @@ window.report = (() => {
     }
 
     const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+    const isLocalScan = window.scanIsLocal || (typeof scanId === 'string' && scanId.indexOf('scan_local_') === 0);
 
-    if (isStaticEnv && scanData) {
-      // Generate the report client-side for static hosting environment
+    if ((isStaticEnv || isLocalScan) && scanData) {
+      // Generate the report client-side for static hosting or backend-unknown local scans
       const reportHtml = generateClientReport(scanData);
       const reportWindow = window.open('', '_blank');
       if (reportWindow) {
@@ -18,9 +19,11 @@ window.report = (() => {
       } else {
         alert('Pop-up blocked! Please allow pop-ups to view the report.');
       }
-    } else {
+    } else if (!isStaticEnv && !isLocalScan) {
       // Open the backend report print window in a new tab
       window.open(`/api/report/${scanId}`, '_blank');
+    } else {
+      alert('Report data unavailable for this scan. Please run the scan again.');
     }
   }
 
@@ -55,15 +58,15 @@ window.report = (() => {
         : '<span class="status-badge fail">VULNERABLE</span>';
 
       const remediationText = f.remediationDetails 
-        ? `<div class="remediation-proof"><strong>Auto-Fixed:</strong> ${f.remediationDetails.verification}</div>`
+        ? `<div class="remediation-proof"><strong>Auto-Fixed:</strong> ${escapeHtml(f.remediationDetails.verification)}</div>`
         : '';
 
       return `
         <tr class="finding-row ${severityClass}">
           <td><span class="severity-tag ${severityClass}">${f.status === 'PASS' ? 'PASS' : f.severity}</span></td>
           <td>
-            <div class="finding-name">${f.name}</div>
-            <div class="finding-desc">${f.description || ''}</div>
+            <div class="finding-name">${escapeHtml(f.name)}</div>
+            <div class="finding-desc">${escapeHtml(f.description || '')}</div>
             ${remediationText}
           </td>
           <td>
@@ -80,7 +83,7 @@ window.report = (() => {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>AutoRemediate Report — ${target}</title>
+        <title>AutoRemediate Report — ${escapeHtml(target)}</title>
         <style>
           body {
             background-color: #0a0e1a;
@@ -276,9 +279,9 @@ window.report = (() => {
             <div>
               <h1>AutoRemediate Security Assessment</h1>
               <div class="meta-info">
-                Target Host: <strong>${target}</strong><br>
+                Target Host: <strong>${escapeHtml(target)}</strong><br>
                 Generated On: ${new Date(scanTime).toLocaleString()}<br>
-                Detected Environment: <span style="text-transform: uppercase;">${infraType}</span>
+                Detected Environment: <span style="text-transform: uppercase;">${escapeHtml(infraType)}</span>
               </div>
             </div>
             <div>

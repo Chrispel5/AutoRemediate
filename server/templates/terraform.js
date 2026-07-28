@@ -1,3 +1,5 @@
+const { quoteRoute53Txt } = require('../utils/route53Txt');
+
 function sanitizeResourceName(name) {
   if (!name) return "resource";
   return name.toLowerCase().replace(/[^a-z0-9_]/g, "_");
@@ -103,6 +105,9 @@ function generateAwsTerraform(finding, target) {
     const recordName = fix.record ? fix.record.name : target;
     const recordType = fix.record ? fix.record.type : "TXT";
     const recordContent = fix.record ? fix.record.content : "";
+    // Route53 TXT values must carry literal inner quotes (and be chunked at
+    // 255 chars) or `terraform apply` fails.
+    const recordValue = recordType === "TXT" ? quoteRoute53Txt(recordContent) : recordContent;
 
     return `# AutoRemediate generated fix for ${finding.id}
 # Review before applying to production.
@@ -117,7 +122,7 @@ resource "aws_route53_record" "autoremediate_${sanitizedId}" {
   name    = "${recordName}"
   type    = "${recordType}"
   ttl     = 300
-  records = ["${escapeTerraformString(recordContent)}"]
+  records = ["${escapeTerraformString(recordValue)}"]
 }`;
   }
 
@@ -217,12 +222,24 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${sanitizedId}"
 }
 
 function generateTerraform(finding, target, provider = "cloudflare") {
-  if (!finding || !finding.fix) {
+  if (!finding) {
     throw new Error("No Terraform export available for this finding.");
   }
 
   if (provider !== "cloudflare" && provider !== "aws") {
     throw new Error("Unsupported provider. Choose 'cloudflare' or 'aws'.");
+  }
+
+  // PASS findings without a fix are already compliant — emit a comment-only
+  // file instead of erroring out (mirrors the client's fallback behavior).
+  if (!finding.fix) {
+    if (finding.status === "PASS") {
+      return `# AutoRemediate Terraform export for ${finding.id} (${provider})
+# ${finding.name}
+# This control is already compliant for ${target} (scan status: PASS).
+# No infrastructure changes are required.`;
+    }
+    throw new Error("No Terraform export available for this finding.");
   }
 
   if (provider === "cloudflare") {

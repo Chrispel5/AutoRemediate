@@ -33,18 +33,18 @@ function generateReport(scan) {
       : '<span class="status-badge fail">VULNERABLE</span>';
 
     const remediationText = f.remediationDetails 
-      ? `<div class="remediation-proof"><strong>Auto-Fixed:</strong> ${f.remediationDetails.verification}</div>`
+      ? `<div class="remediation-proof"><strong>Auto-Fixed:</strong> ${escapeHtml(f.remediationDetails.verification)}</div>`
       : '';
 
     let readinessBadge = '';
     if (f.remediation) {
-      readinessBadge = `<div style="margin-top:4px;"><span class="readiness-tag ${f.remediation.readiness}">${f.remediation.label}</span></div>`;
+      readinessBadge = `<div style="margin-top:4px;"><span class="readiness-tag ${f.remediation.readiness}">${escapeHtml(f.remediation.label)}</span></div>`;
     }
 
     let complianceBadges = '';
     if (f.compliance && f.compliance.length > 0) {
       complianceBadges = `<div class="report-compliance-container">` + 
-        f.compliance.map(c => `<span class="report-compliance-badge">${c.framework}: ${c.control}</span>`).join(' ') + 
+        f.compliance.map(c => `<span class="report-compliance-badge">${escapeHtml(c.framework)}: ${escapeHtml(c.control)}</span>`).join(' ') + 
         `</div>`;
     }
 
@@ -55,8 +55,8 @@ function generateReport(scan) {
           ${readinessBadge}
         </td>
         <td>
-          <div class="finding-name">${f.name}</div>
-          <div class="finding-desc">${f.description || ''}</div>
+          <div class="finding-name">${escapeHtml(f.name)}</div>
+          <div class="finding-desc">${escapeHtml(f.description || '')}</div>
           ${remediationText}
           ${complianceBadges}
         </td>
@@ -74,7 +74,7 @@ function generateReport(scan) {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>AutoRemediate Report — ${target}</title>
+      <title>AutoRemediate Report — ${escapeHtml(target)}</title>
       <style>
         body {
           background-color: #0a0e1a;
@@ -324,9 +324,9 @@ function generateReport(scan) {
           <div>
             <h1>AutoRemediate Security Assessment</h1>
             <div class="meta-info">
-              Target Host: <strong>${target}</strong><br>
+              Target Host: <strong>${escapeHtml(target)}</strong><br>
               Generated On: ${new Date(scanTime).toLocaleString()}<br>
-              Detected Environment: <span style="text-transform: uppercase;">${infraType}</span>
+              Detected Environment: <span style="text-transform: uppercase;">${escapeHtml(infraType)}</span>
             </div>
           </div>
           <div>

@@ -1,23 +1,12 @@
-const { Resolver } = require('dns').promises;
-const customResolver = new Resolver();
-customResolver.setServers(['1.1.1.1', '8.8.8.8']);
+const { dnsRetry, resolver, resolveTxtJoined, isRecordAbsent } = require('../utils/dnsResolver');
 
-// Retry wrapper to prevent false negatives from DNS timeouts
-async function dnsRetry(fn, retries = 2) {
-  for (let i = 0; i <= retries; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (i === retries) throw err;
-      await new Promise(r => setTimeout(r, 500));
-    }
-  }
-}
+// Matches the DMARC p=none tag without matching sp=none (subdomain policy)
+const DMARC_P_NONE = /(^|;)\s*p\s*=\s*none/i;
 
 async function checkSPF(domain) {
   try {
-    const records = await dnsRetry(() => customResolver.resolveTxt(domain));
-    const spfRecord = records.flat().find(r => r.startsWith('v=spf1'));
+    const records = await resolveTxtJoined(domain);
+    const spfRecord = records.find(r => r.startsWith('v=spf1'));
     
     if (!spfRecord) {
       return { 
@@ -29,7 +18,7 @@ async function checkSPF(domain) {
         description: 'Sender Policy Framework (SPF) restricts who can send email on your domain\'s behalf, preventing email spoofing.',
         fix: {
           type: 'dns',
-          record: { type: 'TXT', name: domain, content: 'v=spf1 include:_spf.google.com -all' }
+          record: { type: 'TXT', name: domain, content: 'v=spf1 -all' }
         }
       };
     }
@@ -60,38 +49,56 @@ async function checkSPF(domain) {
       };
     }
     
-    return { 
+    // RFC 7208 forbids combining redirect= with an all mechanism — records
+    // using redirect= must be fixed by hand, not by appending ' -all'.
+    const usesRedirect = /(?:^|\s)redirect=/i.test(spfRecord);
+    const finding = { 
       id: 'spf-noall', 
       name: 'SPF Configured Without Hard Fail', 
       severity: 'MODERATE', 
       status: 'FAIL', 
       evidence: spfRecord,
-      description: 'SPF record is present, but does not use -all to enforce rejection of unauthorized emails.',
-      fix: {
+      description: 'SPF record is present, but does not use -all to enforce rejection of unauthorized emails.'
+    };
+    if (usesRedirect) {
+      finding.description += ' The record uses redirect=, which cannot be combined with -all (RFC 7208); review the redirect target manually.';
+    } else {
+      finding.fix = {
         type: 'dns-update',
         record: { type: 'TXT', name: domain, content: spfRecord.replace(/(\?all|~all|\+all)/, '') + ' -all' }
-      }
-    };
+      };
+    }
+    return finding;
   } catch (err) {
-    return { 
-      id: 'spf-missing', 
-      name: 'No SPF Record Found', 
-      severity: 'HIGH', 
-      status: 'FAIL', 
-      evidence: 'No TXT records found or DNS query timed out',
-      description: 'Sender Policy Framework (SPF) restricts who can send email on your domain\'s behalf.',
-      fix: {
-        type: 'dns',
-        record: { type: 'TXT', name: domain, content: 'v=spf1 include:_spf.google.com -all' }
-      }
+    if (isRecordAbsent(err)) {
+      return { 
+        id: 'spf-missing', 
+        name: 'No SPF Record Found', 
+        severity: 'HIGH', 
+        status: 'FAIL', 
+        evidence: 'No TXT records found for this domain',
+        description: 'Sender Policy Framework (SPF) restricts who can send email on your domain\'s behalf.',
+        fix: {
+          type: 'dns',
+          record: { type: 'TXT', name: domain, content: 'v=spf1 -all' }
+        }
+      };
+    }
+    return {
+      id: 'spf-inconclusive',
+      name: 'SPF Scan Inconclusive',
+      severity: 'LOW',
+      status: 'FAIL',
+      evidence: `DNS lookup error: ${err.code || err.message}`,
+      description: 'The SPF check could not be completed due to a DNS timeout or network error. Re-run the scan to confirm before making changes.'
     };
   }
 }
 
 async function checkDMARC(domain) {
   try {
-    const records = await dnsRetry(() => customResolver.resolveTxt(`_dmarc.${domain}`));
-    const dmarcRecord = records.flat().find(r => r.startsWith('v=DMARC1'));
+    const records = await resolveTxtJoined(`_dmarc.${domain}`);
+    const dmarcRecord = records.find(r => /^v=DMARC1/i.test(r));
     
     if (!dmarcRecord) {
       return {
@@ -108,7 +115,7 @@ async function checkDMARC(domain) {
       };
     }
     
-    if (dmarcRecord.includes('p=none')) {
+    if (DMARC_P_NONE.test(dmarcRecord)) {
       return {
         id: 'dmarc-none',
         name: 'DMARC Policy Set to Monitor (p=none)',
@@ -118,7 +125,7 @@ async function checkDMARC(domain) {
         description: 'DMARC exists, but the policy is p=none (monitoring mode). Spoofed emails are not quarantined or blocked.',
         fix: {
           type: 'dns-update',
-          record: { type: 'TXT', name: `_dmarc.${domain}`, content: dmarcRecord.replace('p=none', 'p=quarantine') }
+          record: { type: 'TXT', name: `_dmarc.${domain}`, content: dmarcRecord.replace(DMARC_P_NONE, '$1p=quarantine') }
         }
       };
     }
@@ -132,24 +139,34 @@ async function checkDMARC(domain) {
       description: 'DMARC policy blocks or quarantines spoofed emails successfully.'
     };
   } catch (err) {
+    if (isRecordAbsent(err)) {
+      return {
+        id: 'dmarc-missing',
+        name: 'No DMARC Record Found',
+        severity: 'CRITICAL',
+        status: 'FAIL',
+        evidence: 'No TXT record found at _dmarc sub-label',
+        description: 'Without a DMARC policy, email receivers cannot authenticate your messages, facilitating phishing.',
+        fix: {
+          type: 'dns',
+          record: { type: 'TXT', name: `_dmarc.${domain}`, content: `v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@${domain};` }
+        }
+      };
+    }
     return {
-      id: 'dmarc-missing',
-      name: 'No DMARC Record Found',
-      severity: 'CRITICAL',
+      id: 'dmarc-inconclusive',
+      name: 'DMARC Scan Inconclusive',
+      severity: 'LOW',
       status: 'FAIL',
-      evidence: 'No TXT record found at _dmarc sub-label',
-      description: 'Without a DMARC policy, email receivers cannot authenticate your messages, facilitating phishing.',
-      fix: {
-        type: 'dns',
-        record: { type: 'TXT', name: `_dmarc.${domain}`, content: `v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@${domain};` }
-      }
+      evidence: `DNS lookup error: ${err.code || err.message}`,
+      description: 'The DMARC check could not be completed due to a DNS timeout or network error. Re-run the scan to confirm before making changes.'
     };
   }
 }
 
 async function checkMX(domain) {
   try {
-    const records = await dnsRetry(() => customResolver.resolveMx(domain));
+    const records = await dnsRetry(() => resolver.resolveMx(domain));
     if (!records || records.length === 0) {
       return {
         id: 'mx-missing',
@@ -171,13 +188,23 @@ async function checkMX(domain) {
       description: 'Mail Exchanger (MX) routing is successfully configured.'
     };
   } catch (err) {
+    if (isRecordAbsent(err)) {
+      return {
+        id: 'mx-missing',
+        name: 'No Mail Exchange (MX) Records',
+        severity: 'LOW',
+        status: 'FAIL',
+        evidence: 'No MX records found',
+        description: 'No MX records found.'
+      };
+    }
     return {
-      id: 'mx-missing',
-      name: 'No Mail Exchange (MX) Records',
+      id: 'mx-inconclusive',
+      name: 'MX Scan Inconclusive',
       severity: 'LOW',
       status: 'FAIL',
-      evidence: 'No MX records or DNS lookup timed out',
-      description: 'No MX records found.'
+      evidence: `DNS lookup error: ${err.code || err.message}`,
+      description: 'The MX check could not be completed due to a DNS timeout or network error. Re-run the scan to confirm.'
     };
   }
 }
@@ -189,8 +216,8 @@ async function checkDKIM(domain) {
 
   for (const selector of selectors) {
     try {
-      const records = await dnsRetry(() => customResolver.resolveTxt(`${selector}._domainkey.${domain}`));
-      const dkim = records.flat().find(r => r.includes('v=DKIM1') || r.includes('k=rsa'));
+      const records = await resolveTxtJoined(`${selector}._domainkey.${domain}`);
+      const dkim = records.find(r => r.includes('v=DKIM1') || r.includes('k=rsa'));
       if (dkim) {
         dkimFindings.push(`${selector}: ${dkim}`);
       }
@@ -222,8 +249,7 @@ async function checkDKIM(domain) {
 
 async function checkStaleTXT(domain) {
   try {
-    const records = await dnsRetry(() => customResolver.resolveTxt(domain));
-    const flatRecords = records.flat();
+    const flatRecords = await resolveTxtJoined(domain);
     const staleTokens = [];
 
     // Look for legacy tokens (e.g. google-site-verification, msocsp, loader.io tokens, etc.)
@@ -240,7 +266,7 @@ async function checkStaleTXT(domain) {
       const isVerification = checkPatterns.some(pat => pat.test(rec));
       // Exclude known legitimate record types
       const isSpf = rec.startsWith('v=spf1');
-      const isDmarc = rec.startsWith('v=DMARC1');
+      const isDmarc = /^v=DMARC1/i.test(rec);
       const isDkim = rec.includes('v=DKIM1') || rec.includes('k=rsa');
       const isKnown = isSpf || isDmarc || isDkim;
       if (isVerification && !isKnown) {
@@ -272,13 +298,23 @@ async function checkStaleTXT(domain) {
       description: 'Clean TXT records containing no obsolete domain markers.'
     };
   } catch (err) {
+    if (isRecordAbsent(err)) {
+      return {
+        id: 'stale-txt',
+        name: 'DNS TXT Records Clean',
+        severity: 'PASS',
+        status: 'PASS',
+        evidence: 'No TXT records resolved',
+        description: 'Clean DNS state.'
+      };
+    }
     return {
-      id: 'stale-txt',
-      name: 'DNS TXT Records Clean',
-      severity: 'PASS',
-      status: 'PASS',
-      evidence: 'No TXT records resolved',
-      description: 'Clean DNS state.'
+      id: 'stale-txt-inconclusive',
+      name: 'TXT Hygiene Scan Inconclusive',
+      severity: 'LOW',
+      status: 'FAIL',
+      evidence: `DNS lookup error: ${err.code || err.message}`,
+      description: 'The stale TXT token check could not be completed due to a DNS timeout or network error. Re-run the scan to confirm before making changes.'
     };
   }
 }
