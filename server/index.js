@@ -31,6 +31,7 @@ const route53Remediator = require('./remediators/route53Remediator');
 const { applyCompliance } = require('./templates/compliance');
 const { applyRemediationMetadata } = require('./templates/remediation');
 const { generateTerraform } = require('./templates/terraform');
+const scanDb = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -57,6 +58,7 @@ function cacheScan(scanId, scanResult) {
     scanCache.delete(oldestKey);
   }
   scanCache.set(scanId, scanResult);
+  try { scanDb.saveScan(scanId, scanResult); } catch (e) { console.error('[DB] saveScan failed:', e.message); }
 }
 let cfConnection = {
   connected: false,
@@ -447,6 +449,7 @@ app.post('/api/remediate', async (req, res) => {
       
       // Update scanCache
       cacheScan(scanId, scan);
+      try { scanDb.recordRemediation(scanId, findingId, provider, remediationResult.verification); } catch (e) { console.error('[DB] recordRemediation failed:', e.message); }
       return res.json({ success: true, finding: scan.findings[findingIndex] });
     } else {
       let errText = remediationResult ? remediationResult.error : 'Unknown error during remediation';
@@ -464,10 +467,10 @@ app.post('/api/remediate', async (req, res) => {
   }
 });
 
-// Route: Generate HTML Report
+// Route: Generate HTML Report (falls back to SQLite so reports survive restarts)
 app.get('/api/report/:scanId', (req, res) => {
   const { scanId } = req.params;
-  const scan = scanCache.get(scanId);
+  const scan = scanCache.get(scanId) || scanDb.getScan(scanId);
   if (!scan) {
     return res.status(404).send('<h1>Report Not Found</h1><p>Please run a scan first.</p>');
   }
@@ -475,6 +478,19 @@ app.get('/api/report/:scanId', (req, res) => {
   const html = reportBuilder.generateReport(scan);
   res.setHeader('Content-Type', 'text/html');
   return res.send(html);
+});
+
+// Route: Scan history (list + detail)
+app.get('/api/history', (req, res) => {
+  return res.json({ scans: scanDb.listScans() });
+});
+
+app.get('/api/history/:scanId', (req, res) => {
+  const scan = scanDb.getScan(req.params.scanId);
+  if (!scan) {
+    return res.status(404).json({ error: 'Scan not found' });
+  }
+  return res.json({ scan, remediations: scanDb.listRemediations(req.params.scanId) });
 });
 
 // Route: Portfolio/Demo Mode data
