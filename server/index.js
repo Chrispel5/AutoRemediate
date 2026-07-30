@@ -25,6 +25,7 @@ const reportBuilder = require('./utils/reportBuilder');
 
 const AWSConnector = require('./connectors/awsConnector');
 const cloudfrontRemediator = require('./remediators/cloudfrontRemediator');
+const albRemediator = require('./remediators/albRemediator');
 const route53Remediator = require('./remediators/route53Remediator');
 
 // Upgrade Templates & Exporters
@@ -430,7 +431,12 @@ app.post('/api/remediate', async (req, res) => {
 
       if ((targetProvider === 'aws' || targetProvider === 'both' || (!explicitProvider && (!remediationResult || !remediationResult.success))) && awsConnection.connected) {
         const awsConn = new AWSConnector(awsConnection.accessKeyId, awsConnection.secretAccessKey, awsConnection.region, awsConnection.sessionToken);
-        const awsResult = await cloudfrontRemediator.applyFix(awsConn, scan.target, finding);
+        // Prefer ALB listener header injection when the site fronts an ALB;
+        // fall back to CloudFront Response Headers Policy otherwise.
+        let awsResult = await albRemediator.applyFix(awsConn, scan.target, finding);
+        if (awsResult && awsResult.notApplicable) {
+          awsResult = await cloudfrontRemediator.applyFix(awsConn, scan.target, finding);
+        }
         if (remediationResult && remediationResult.success && awsResult.success) {
           remediationResult.verification += ` | ${awsResult.verification}`;
         } else if (!remediationResult || !remediationResult.success) {

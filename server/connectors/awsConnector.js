@@ -105,6 +105,49 @@ class AWSConnector {
     return text;
   }
 
+  // --- ELBv2 (Application Load Balancer) — regional Query API ---
+
+  async elbv2(params) {
+    const host = `elasticloadbalancing.${this.region}.amazonaws.com`;
+    return this.request('elasticloadbalancing', host, 'GET', '/', { Version: '2015-12-01', ...params });
+  }
+
+  async describeLoadBalancers() {
+    const xml = await this.elbv2({ Action: 'DescribeLoadBalancers' });
+    const lbs = [];
+    const matches = xml.matchAll(/<member>([\s\S]*?)<\/member>/g);
+    for (const m of matches) {
+      const arn = m[1].match(/<LoadBalancerArn>([^<]+)<\/LoadBalancerArn>/);
+      const dns = m[1].match(/<DNSName>([^<]+)<\/DNSName>/);
+      const type = m[1].match(/<Type>([^<]+)<\/Type>/);
+      if (arn && dns && type && type[1] === 'application') {
+        lbs.push({ arn: arn[1], dnsName: dns[1].toLowerCase() });
+      }
+    }
+    return lbs;
+  }
+
+  async describeListeners(loadBalancerArn) {
+    const xml = await this.elbv2({ Action: 'DescribeListeners', LoadBalancerArn: loadBalancerArn });
+    const listeners = [];
+    const matches = xml.matchAll(/<member>([\s\S]*?)<\/member>/g);
+    for (const m of matches) {
+      const arn = m[1].match(/<ListenerArn>([^<]+)<\/ListenerArn>/);
+      const port = m[1].match(/<Port>(\d+)<\/Port>/);
+      if (arn) listeners.push({ arn: arn[1], port: port ? parseInt(port[1], 10) : null });
+    }
+    return listeners;
+  }
+
+  async modifyListenerAttributes(listenerArn, attributes) {
+    const params = { Action: 'ModifyListenerAttributes', ListenerArn: listenerArn };
+    Object.entries(attributes).forEach(([key, value], i) => {
+      params[`Attributes.member.${i + 1}.Key`] = key;
+      params[`Attributes.member.${i + 1}.Value`] = value;
+    });
+    return this.elbv2(params);
+  }
+
   // Verify credentials by calling GetCallerIdentity on STS
   async verifyCredentials() {
     try {
