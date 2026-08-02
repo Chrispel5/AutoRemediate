@@ -30,7 +30,23 @@ function inspect(domain) {
       const daysRemaining = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
       
       const protocol = socket.getProtocol();
-      const cipher = socket.getCipher();
+
+      // We connect with rejectUnauthorized:false so bad certificates can be
+      // classified instead of throwing — which means hostname and validity
+      // window must be checked manually before anything is reported as PASS.
+      const apex = domain.replace(/^www\./, '');
+      const altNames = (cert.subjectaltname || '')
+        .split(',')
+        .map(s => s.trim().replace(/^DNS:/i, '').toLowerCase())
+        .filter(Boolean);
+      const certCN = (cert.subject && cert.subject.CN ? cert.subject.CN : '').toLowerCase();
+      const target = domain.toLowerCase();
+      const wildcardCovers = (name) => name.startsWith('*.') && target.endsWith(name.slice(1)) &&
+        target.split('.').length === name.split('.').length;
+      const hostnameValid = altNames.some(n => n === target || wildcardCovers(n)) ||
+        certCN === target || (certCN.startsWith('*.') && wildcardCovers(certCN)) ||
+        altNames.includes(apex);
+      const notYetValid = new Date(cert.valid_from) > now;
 
       if (daysRemaining <= 0) {
         resolve({
@@ -40,6 +56,42 @@ function inspect(domain) {
           status: 'FAIL',
           evidence: `Expired on: ${cert.valid_to} (${Math.abs(daysRemaining)} days ago)`,
           description: 'The SSL/TLS certificate has expired, displaying standard security warning pages to web visitors.'
+        });
+      } else if (!hostnameValid) {
+        resolve({
+          id: 'tls-hostname-mismatch',
+          name: 'TLS Certificate Not Valid for This Hostname',
+          severity: 'HIGH',
+          status: 'FAIL',
+          evidence: `Certificate covers: ${altNames.join(', ') || certCN || 'unknown'} — requested hostname: ${domain}`,
+          description: 'The presented certificate does not cover this hostname (subjectAltName mismatch), so browsers will reject it with a security warning.'
+        });
+      } else if (notYetValid) {
+        resolve({
+          id: 'tls-not-yet-valid',
+          name: 'TLS Certificate Not Yet Valid',
+          severity: 'HIGH',
+          status: 'FAIL',
+          evidence: `Certificate valid from: ${cert.valid_from}`,
+          description: 'The certificate start date is in the future, so browsers will treat it as invalid.'
+        });
+      } else if (socket.authorized === false) {
+        resolve({
+          id: 'tls-untrusted',
+          name: 'TLS Certificate Not Trusted',
+          severity: 'HIGH',
+          status: 'FAIL',
+          evidence: `Chain validation failed: ${socket.authorizationError || 'unknown error'}`,
+          description: 'The certificate is self-signed or issued by an untrusted CA. Browsers will show a full-page certificate warning.'
+        });
+      } else if (protocol === 'TLSv1' || protocol === 'TLSv1.1') {
+        resolve({
+          id: 'tls-old-protocol',
+          name: 'Deprecated TLS Protocol Negotiated',
+          severity: 'MODERATE',
+          status: 'FAIL',
+          evidence: `Negotiated protocol: ${protocol}`,
+          description: 'TLS 1.0/1.1 are deprecated and rejected by modern browsers and PCI DSS. Enable TLS 1.2 and 1.3 only.'
         });
       } else if (daysRemaining < 30) {
         resolve({

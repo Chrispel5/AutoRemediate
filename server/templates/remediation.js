@@ -136,7 +136,143 @@ const COPILOT_CUSTOM = {
   }
 };
 
+// "Operational risk" = the chance that APPLYING the fix breaks something in
+// production. That is deliberately NOT the vulnerability's severity, and the
+// two are independent — sometimes inverse. Hiding a `Server:` version banner
+// is a HIGH-severity finding with essentially zero deployment risk; enabling
+// HSTS is only MODERATE severity but its rollback is capped by a one-year
+// browser cache.
+//
+// The old code set riskLevel from finding.severity, so the field just restated
+// the severity badge shown directly above it, and every PASS finding was
+// hardcoded "low" — which is what made the drawer look like it always says LOW
+// (PASS findings are usually the majority of a scan).
+//
+// Scored on blast radius + reversibility, and kept consistent with the
+// whatCouldBreak / rollbackPlan prose in COPILOT_CUSTOM above.
+const FIX_RISK = {
+  // --- High: can break mail delivery or page rendering, or is slow to undo ---
+  "hsts-missing": {
+    level: "high",
+    basis: "Forces HTTPS across the domain and any subdomains. Browsers cache the max-age (1 year), so an incorrect rollout cannot be quickly reversed for visitors who already received the header."
+  },
+  "csp-missing": {
+    level: "high",
+    basis: "A policy that misses a legitimate script, style, or third-party origin will block it outright. CSP is the most common cause of breakage among header fixes."
+  },
+  "spf-missing": {
+    level: "high",
+    basis: "Publishing -all rejects mail from any sender not listed. Missing a legitimate sender (marketing tool, ticketing system, CRM) causes their mail to bounce."
+  },
+  "spf-softfail": {
+    level: "high",
+    basis: "Tightening ~all to -all converts 'flag as suspicious' into 'reject'. Any unlisted legitimate sender starts bouncing immediately."
+  },
+  "dmarc-missing": {
+    level: "high",
+    basis: "A quarantine policy sends unaligned mail to spam. If SPF/DKIM alignment is incomplete, legitimate mail is affected as soon as the record propagates."
+  },
+  "dmarc-none": {
+    level: "high",
+    basis: "Moving from monitoring to quarantine starts acting on failures that were previously only reported. Review your DMARC aggregate reports first."
+  },
+  "subdomain-takeover": {
+    level: "high",
+    basis: "Deleting the CNAME takes the subdomain offline if the target was actually still in use. Confirm the resource is genuinely unclaimed at the provider before applying — the detection signal alone does not prove it."
+  },
+
+  // --- Medium: narrower blast radius, straightforward to undo ---
+  "xframe-missing": {
+    level: "medium",
+    basis: "Blocks framing of the site. Breaks any legitimate embedding in partner sites, dashboards, or internal tools. Reversible by removing the header."
+  },
+  "cookie-insecure": {
+    level: "medium",
+    basis: "SameSite=Strict can break cross-site sign-in flows and payment redirects that rely on cookies surviving a third-party hop."
+  },
+  "stale-txt-token": {
+    level: "medium",
+    basis: "If the associated service is still active, deleting the token revokes its domain verification. Reversible by re-adding the record."
+  },
+
+  // --- Low: no functional change to the application ---
+  "xcto-missing": {
+    level: "low",
+    basis: "nosniff only stops MIME-type guessing. Affects legacy browsers serving files with mismatched Content-Type."
+  },
+  "referrer-missing": {
+    level: "low",
+    basis: "Reduces referrer detail sent to third parties. May affect analytics attribution; no functional impact on the site."
+  },
+  "permissions-missing": {
+    level: "low",
+    basis: "Restricts browser feature access (camera, geolocation, etc.). Only affects features the site actually requests."
+  },
+  "server-version-exposed": {
+    level: "low",
+    basis: "Suppresses a diagnostic banner. No functional change to request handling."
+  },
+  "xpoweredby-exposed": {
+    level: "low",
+    basis: "Removes a purely informational header. No operational impact."
+  },
+  "error-disclosure": {
+    level: "low",
+    basis: "Errors are written to server logs instead of the browser. Developers lose in-browser tracebacks but behaviour is unchanged."
+  },
+  "dkim-missing": {
+    level: "low",
+    basis: "Publishing a DKIM key is additive — existing mail flow is unaffected until the provider begins signing with it."
+  }
+};
+
+// Fallback by fix mechanism when a finding id has no explicit entry.
+const FIX_TYPE_RISK = {
+  "dns": {
+    level: "medium",
+    basis: "Adds a DNS record. Effects appear as caches expire and are reversed by deleting the record."
+  },
+  "dns-update": {
+    level: "medium",
+    basis: "Modifies an existing DNS record. Keep the previous value so it can be restored if the change causes problems."
+  },
+  "dns-delete": {
+    level: "medium",
+    basis: "Removes a DNS record. Disruptive if the record is still relied upon; reversible by re-creating it."
+  },
+  "cloudflare-rule": {
+    level: "medium",
+    basis: "Injects a response header at the edge for every request. Reversible by disabling the rule."
+  },
+  "config": {
+    level: "medium",
+    basis: "Requires a server configuration change and a service reload. Stage it before applying in production."
+  }
+};
+
+function computeFixRisk(finding) {
+  // Nothing is being applied for a passing check, so there is no operational
+  // risk to report. Returning null lets the UI omit the row entirely rather
+  // than print a meaningless "LOW".
+  if (finding.status === "PASS") {
+    return { level: null, basis: null };
+  }
+
+  const byId = FIX_RISK[finding.id];
+  if (byId) return byId;
+
+  if (finding.fix && FIX_TYPE_RISK[finding.fix.type]) {
+    return FIX_TYPE_RISK[finding.fix.type];
+  }
+
+  return {
+    level: "medium",
+    basis: "No risk assessment is recorded for this fix. Review the change manually before applying it."
+  };
+}
+
 function buildRemediation(finding) {
+  const risk = computeFixRisk(finding);
   const isTerraformable = ['csp-missing', 'csp', 'hsts-missing', 'hsts', 'xframe-missing', 'xframe', 'xcto-missing', 'xcto', 'spf-missing', 'spf-softfail', 'spf', 'dmarc-missing', 'dmarc-none', 'dmarc', 'subdomain-takeover', 'subdomain-takeover-clean', 'stale-txt-token', 'stale-txt'].includes(finding.id) || !!finding.fix;
 
   if (finding.status === "PASS") {
@@ -145,7 +281,8 @@ function buildRemediation(finding) {
       label: "Verified",
       primaryAction: "Close",
       secondaryAction: isTerraformable ? "Export Terraform" : null,
-      riskLevel: "low",
+      riskLevel: risk.level,
+      riskBasis: risk.basis,
       provider: ["cloudflare", "aws"],
       requires: [],
       canAutoFix: false,
@@ -160,7 +297,8 @@ function buildRemediation(finding) {
       label: "Needs DKIM value",
       primaryAction: "Provide Details",
       secondaryAction: "View Guide",
-      riskLevel: "low",
+      riskLevel: risk.level,
+      riskBasis: risk.basis,
       provider: ["cloudflare", "aws", "manual"],
       requires: ["Mail provider DKIM selector", "DKIM public key"],
       canAutoFix: false,
@@ -176,7 +314,8 @@ function buildRemediation(finding) {
         label: "Auto-fixable",
         primaryAction: "Auto-Fix",
         secondaryAction: "Export Terraform",
-        riskLevel: finding.severity === "CRITICAL" || finding.severity === "HIGH" ? "high" : "medium",
+        riskLevel: risk.level,
+        riskBasis: risk.basis,
         provider: ["cloudflare", "aws"],
         requires: ["Cloudflare API token or AWS connection"],
         canAutoFix: true,
@@ -191,7 +330,8 @@ function buildRemediation(finding) {
         label: "Auto-fixable",
         primaryAction: "Auto-Fix",
         secondaryAction: "Export Terraform",
-        riskLevel: "low",
+        riskLevel: risk.level,
+        riskBasis: risk.basis,
         provider: ["cloudflare", "aws"],
         requires: ["DNS write access"],
         canAutoFix: true,
@@ -206,7 +346,8 @@ function buildRemediation(finding) {
         label: "Generate patch",
         primaryAction: "Generate Patch",
         secondaryAction: "View Fix",
-        riskLevel: "medium",
+        riskLevel: risk.level,
+        riskBasis: risk.basis,
         provider: ["apache", "nginx"],
         requires: ["Server config access"],
         canAutoFix: false,
@@ -221,7 +362,8 @@ function buildRemediation(finding) {
     label: "Manual Fix",
     primaryAction: "View Fix",
     secondaryAction: "View Guide",
-    riskLevel: "medium",
+    riskLevel: risk.level,
+    riskBasis: risk.basis,
     provider: ["manual"],
     requires: ["Administrator access"],
     canAutoFix: false,
@@ -270,4 +412,4 @@ function applyRemediationMetadata(findings, target) {
   }));
 }
 
-module.exports = { applyRemediationMetadata, buildRemediation, buildCopilot };
+module.exports = { applyRemediationMetadata, buildRemediation, buildCopilot, computeFixRisk };

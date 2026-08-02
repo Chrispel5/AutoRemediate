@@ -37,7 +37,22 @@ const scanDb = require('./db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// The UI is served same-origin by this Express server, so cross-origin API
+// calls are never legitimate. Lock CORS to localhost tool origins instead of
+// the previous wildcard (which let any web page drive this server's cloud
+// credentials).
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:3000', 'http://127.0.0.1:3000',
+  'http://localhost:5500', 'http://127.0.0.1:5500',
+  'http://localhost:8080', 'http://127.0.0.1:8080'
+]);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+    return cb(new Error('Origin not allowed by CORS'));
+  }
+}));
+app.disable('x-powered-by');
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
@@ -52,14 +67,17 @@ app.use('/api', apiLimiter);
 const scanCache = new Map();
 const SCAN_CACHE_MAX = 100;
 
-// Cap the cache by evicting the oldest entry (Map preserves insertion order)
-function cacheScan(scanId, scanResult) {
+// Cap the cache by evicting the oldest entry (Map preserves insertion order).
+// persist=false keeps demo data out of the SQLite scan history.
+function cacheScan(scanId, scanResult, persist = true) {
   if (scanCache.size >= SCAN_CACHE_MAX && !scanCache.has(scanId)) {
     const oldestKey = scanCache.keys().next().value;
     scanCache.delete(oldestKey);
   }
   scanCache.set(scanId, scanResult);
-  try { scanDb.saveScan(scanId, scanResult); } catch (e) { console.error('[DB] saveScan failed:', e.message); }
+  if (persist) {
+    try { scanDb.saveScan(scanId, scanResult); } catch (e) { console.error('[DB] saveScan failed:', e.message); }
+  }
 }
 let cfConnection = {
   connected: false,
@@ -73,6 +91,7 @@ let awsConnection = {
   secretAccessKey: null,
   sessionToken: null,
   region: 'us-east-1',
+  expiresAt: null, // assumed-role temporary credentials expire after 1h
   distributionMap: new Map() // domain -> distributionId
 };
 
@@ -112,10 +131,26 @@ app.get('/api/status', (req, res) => {
     awsConnected: awsConnection.connected,
     hasToken: !!cfConnection.token,
     hasAwsKey: !!(awsConnection.accessKeyId || awsConnection.roleArn),
-    roleArn: awsConnection.roleArn,
+    roleArn: awsConnection.roleArn ? '***' : null, // never leak the ARN to clients
     cachedScans: scanCache.size,
     cachedZones: cfConnection.zoneMap.size
   });
+});
+
+// Route: Disconnect providers and wipe stored credentials from memory
+app.post('/api/disconnect', (req, res) => {
+  cfConnection.connected = false;
+  cfConnection.token = null;
+  cfConnection.zoneMap.clear();
+  awsConnection.connected = false;
+  awsConnection.roleArn = null;
+  awsConnection.accessKeyId = null;
+  awsConnection.secretAccessKey = null;
+  awsConnection.sessionToken = null;
+  awsConnection.region = 'us-east-1';
+  awsConnection.expiresAt = null;
+  awsConnection.distributionMap.clear();
+  return res.json({ success: true, message: 'Disconnected providers and cleared credentials' });
 });
 
 function getLocalAwsCredentials() {
@@ -131,9 +166,13 @@ function getLocalAwsCredentials() {
     const credPath = path.join(os.homedir(), '.aws', 'credentials');
     if (fs.existsSync(credPath)) {
       const content = fs.readFileSync(credPath, 'utf8');
-      const keyMatch = content.match(/aws_access_key_id\s*=\s*([^\s]+)/i);
-      const secMatch = content.match(/aws_secret_access_key\s*=\s*([^\s]+)/i);
-      const tokenMatch = content.match(/aws_session_token\s*=\s*([^\s]+)/i);
+      // Only read the [default] profile so keys from different profiles are
+      // never cross-paired into one credential set.
+      const defaultSection = content.match(/^\[default\]([\s\S]*?)(?=^\s*\[|\s*$)/m);
+      const section = defaultSection ? defaultSection[1] : content;
+      const keyMatch = section.match(/aws_access_key_id\s*=\s*([^\s]+)/i);
+      const secMatch = section.match(/aws_secret_access_key\s*=\s*([^\s]+)/i);
+      const tokenMatch = section.match(/aws_session_token\s*=\s*([^\s]+)/i);
       if (keyMatch && secMatch) {
         return {
           accessKeyId: keyMatch[1],
@@ -142,7 +181,9 @@ function getLocalAwsCredentials() {
         };
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('[AWS] Failed to read local AWS credentials:', e.message);
+  }
 
   return null;
 }
@@ -189,6 +230,7 @@ app.post('/api/connect-aws', async (req, res) => {
     awsConnection.secretAccessKey = secKey;
     awsConnection.sessionToken = sToken;
     awsConnection.region = awsRegion;
+    awsConnection.expiresAt = roleArn ? Date.now() + 3600 * 1000 : null;
     awsConnection.distributionMap.clear();
 
     const message = roleArn
@@ -322,7 +364,7 @@ app.post('/api/terraform/export', (req, res) => {
     return res.status(400).json({ error: "Unsupported provider. Choose 'cloudflare' or 'aws'." });
   }
 
-  const scan = scanCache.get(scanId);
+  const scan = scanCache.get(scanId) || scanDb.getScan(scanId);
   if (!scan) {
     return res.status(404).json({ error: 'Scan session not found' });
   }
@@ -356,7 +398,7 @@ app.post('/api/remediate', async (req, res) => {
     return res.status(400).json({ error: 'scanId and findingId are required' });
   }
 
-  const scan = scanCache.get(scanId);
+  const scan = scanCache.get(scanId) || scanDb.getScan(scanId);
   if (!scan) {
     return res.status(404).json({ error: 'Scan session not found' });
   }
@@ -387,6 +429,20 @@ app.post('/api/remediate', async (req, res) => {
     // requested (or 'both' was requested).
     const explicitProvider = provider && provider !== 'both' ? provider : null;
     const targetProvider = provider || (awsConnection.connected && !cfConnection.connected ? 'aws' : 'cloudflare');
+
+    // Fail fast with a clear message when the requested provider is not
+    // connected, instead of silently returning "Unknown error".
+    if (explicitProvider === 'cloudflare' && !cfConnection.connected) {
+      return res.status(400).json({ error: 'Cloudflare is not connected. Connect Cloudflare first, or request provider "aws".' });
+    }
+    if (explicitProvider === 'aws' && !awsConnection.connected) {
+      return res.status(400).json({ error: 'AWS is not connected. Connect AWS first, or request provider "cloudflare".' });
+    }
+    // Assumed-role session tokens expire after 1 hour; refuse to act on stale creds.
+    if (awsConnection.connected && awsConnection.expiresAt && Date.now() > awsConnection.expiresAt) {
+      awsConnection.connected = false;
+      return res.status(400).json({ error: 'AWS session credentials have expired. Reconnect to AWS (or re-assume the IAM role) before remediating.' });
+    }
 
     if (finding.fix.type === 'dns' || finding.fix.type === 'dns-update' || finding.fix.type === 'dns-delete') {
       if ((targetProvider === 'cloudflare' || targetProvider === 'both') && cfConnection.connected) {
@@ -448,10 +504,14 @@ app.post('/api/remediate', async (req, res) => {
     }
 
     if (remediationResult && remediationResult.success) {
-      // Update finding status to PASS
-      scan.findings[findingIndex].status = 'PASS';
-      scan.findings[findingIndex].severity = 'PASS';
-      scan.findings[findingIndex].remediationDetails = remediationResult;
+      // Only a genuinely verified result flips the finding to PASS. An applied
+      // but unconfirmed fix (e.g. DNS propagation still pending) stays FAIL so
+      // the UI can never claim "verified" for an unverified change.
+      const verificationText = remediationResult.verification || '';
+      const actuallyVerified = /verified/i.test(verificationText) && !/pending/i.test(verificationText);
+      scan.findings[findingIndex].status = actuallyVerified ? 'PASS' : 'FAIL';
+      scan.findings[findingIndex].severity = actuallyVerified ? 'PASS' : scan.findings[findingIndex].severity;
+      scan.findings[findingIndex].remediationDetails = { ...remediationResult, verified: actuallyVerified };
       
       // Update scanCache
       cacheScan(scanId, scan);
@@ -627,7 +687,9 @@ app.get('/api/demo', (req, res) => {
 
   demoData.findings = applyRemediationMetadata(applyCompliance(demoData.findings), demoData.target);
 
-  cacheScan(scanId, demoData);
+  // Demo data is kept out of the SQLite scan history so it never pollutes
+  // real assessment listings.
+  cacheScan(scanId, demoData, false);
   return res.json(demoData);
 });
 

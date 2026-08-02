@@ -429,6 +429,19 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
     const cop = finding.copilot;
     const rem = finding.remediation;
     const riskLevel = rem.riskLevel || 'medium';
+    // Operational risk is only shown when a fix actually gets applied — for
+    // PASS findings there is nothing to apply, and the old "LOW" row was pure
+    // noise. riskBasis gives the *reason* behind the rating (it was previously
+    // just a colour with no explanation).
+    const hasRisk = rem.riskLevel && finding.status !== 'PASS';
+    const riskText = (hasRisk && rem.riskBasis) ? rem.riskBasis : '';
+    const riskBlock = hasRisk ? `
+      <div class="copilot-section">
+        <strong>Operational Risk of Applying This Fix</strong>
+        <p style="font-weight:700; color: ${riskLevel === 'high' ? 'var(--critical)' : (riskLevel === 'medium' ? 'var(--moderate)' : 'var(--pass)')};">${riskLevel.toUpperCase()}</p>
+        ${riskText ? `<p>${escapeHtml(riskText)}</p>` : ''}
+      </div>
+    ` : '';
 
     let actionButtons = ``;
     if (rem.canAutoFix) {
@@ -471,9 +484,10 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
       <div class="copilot-section">
         <strong>Fix Readiness Status</strong>
         <p>Readiness: <span class="badge-readiness ${rem.readiness}">${rem.label}</span></p>
-        <p>Operational Risk: <span style="font-weight:700; color: ${riskLevel === 'high' ? 'var(--critical)' : (riskLevel === 'medium' ? 'var(--moderate)' : 'var(--pass)')};">${riskLevel.toUpperCase()}</span></p>
         <p>Required Access: <code>${rem.requires && rem.requires.length > 0 ? escapeHtml(rem.requires.join(', ')) : 'None'}</code></p>
       </div>
+
+      ${riskBlock}
 
       <div class="copilot-section">
         <strong>What is wrong?</strong>
@@ -488,7 +502,7 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
       ${exactChangeHtml}
 
       <div class="copilot-section">
-        <strong>Operational Risk & What Could Break</strong>
+        <strong>What Could Break</strong>
         <p>${escapeHtml(cop.whatCouldBreak)}</p>
       </div>
 
@@ -597,32 +611,24 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
     if (!verifyConfirm) return;
 
     if (isStaticEnv || window.scanIsLocal) {
-      // Simulate API call and verification latency
-      const targetBtn = document.querySelector(`[onclick*="window.remediation.apply('${scanId}', '${findingId}')"]`);
-      if (targetBtn) {
-        targetBtn.disabled = true;
-        targetBtn.textContent = 'Applying...';
-      }
-
-      await new Promise(r => setTimeout(r, 1500));
-
-      if (targetBtn) {
-        targetBtn.textContent = 'Verifying...';
-      }
-
-      await new Promise(r => setTimeout(r, 1000));
-
-      alert(`Vulnerability successfully auto-remediated and verified via ${providerLabel}!`);
-      
-      // Mark the stored finding as fixed and re-render so badges stay consistent
-      const localFinding = window.currentFindings && window.currentFindings.find(f => f.id === findingId);
-      if (localFinding) {
-        localFinding.status = 'PASS';
-      }
-      if (window.currentFindings) {
-        window.dashboard.renderFindings(window.currentFindings, window.currentScanId);
-      }
-      closeCopilot();
+      // BUG A2: this used to sleep 1.5s ("Applying...") then 1s
+      // ("Verifying..."), alert "successfully auto-remediated and verified",
+      // and flip the finding to PASS — without touching DNS, any header, or
+      // any cloud API. Nothing was applied and nothing was verified, yet the
+      // exported report then showed the issue as fixed.
+      //
+      // In a static/backend-less context no remediation is possible: the API
+      // credentials and the provider calls both live server-side. Say so
+      // plainly and leave the finding's status untouched.
+      alert(
+        'Auto-fix is unavailable in this mode.\n\n' +
+        'Applying a fix requires the AutoRemediate backend server plus a connected ' +
+        'Cloudflare or AWS account, because the provider API calls are made server-side. ' +
+        'This page is running without a backend, so no change can be made to your ' +
+        'DNS or headers from here.\n\n' +
+        'Use "Export Terraform" or the Copilot instructions to apply the fix yourself, ' +
+        'then re-scan to confirm it took effect.'
+      );
       return;
     }
 
@@ -635,8 +641,21 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
 
       const data = await response.json();
       if (response.ok && data.success) {
-        alert('Vulnerability successfully auto-remediated and verified!');
-        
+        // BUG A2/A3: the backend reports success for BOTH "verified live" and
+        // "applied, propagation pending". Claiming "verified" in the pending
+        // case is a false confirmation, so the wording follows the proof text.
+        const verification = (data.finding && data.finding.remediationDetails && data.finding.remediationDetails.verification) || '';
+        const isConfirmed = /^verified/i.test(verification.trim())
+          && !/pending|not yet|verify manually/i.test(verification);
+
+        if (isConfirmed) {
+          alert(`Fix applied and verified.\n\n${verification}`);
+        } else if (verification) {
+          alert(`Fix applied, but not yet confirmed.\n\n${verification}\n\nChanges can take time to propagate — re-scan shortly to confirm.`);
+        } else {
+          alert('Fix applied. The change could not be confirmed live yet — re-scan shortly to verify.');
+        }
+
         // Merge the remediated finding returned by the backend into the stored
         // findings (same array referenced by window.currentScanData.findings)
         if (data.finding && window.currentFindings) {

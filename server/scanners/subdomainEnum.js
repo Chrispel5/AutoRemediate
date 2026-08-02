@@ -40,13 +40,18 @@ async function enumerate(domain) {
             await dns.resolve(target);
             activeSubdomains.push(`${subDomain} → CNAME to ${target} (Resolves)`);
           } catch (dnsErr) {
-            // Target does NOT resolve (NXDOMAIN)
-            if (dnsErr.code === 'ENOTFOUND' || dnsErr.code === 'ENODATA') {
+            // A CNAME target that returns NXDOMAIN is the classic dangling
+            // signature. ENODATA is NOT: the name exists but has no A record
+            // (common for healthy CNAME chains), so it is excluded here to
+            // avoid claiming takeover on a live service.
+            if (dnsErr.code === 'ENOTFOUND') {
               takeoverFindings.push({
                 subdomain: subDomain,
                 cname: target,
-                reason: `CNAME points to an inactive/expired service: ${target} (NXDOMAIN)`
+                reason: `CNAME points to an unregistered service hostname: ${target} (NXDOMAIN)`
               });
+            } else {
+              activeSubdomains.push(`${subDomain} → CNAME to ${target} (${dnsErr.code})`);
             }
           }
         } else {
@@ -71,11 +76,11 @@ async function enumerate(domain) {
   if (takeoverFindings.length > 0) {
     return {
       id: 'subdomain-takeover',
-      name: 'Dangling CNAME Subdomain Takeover Risk',
-      severity: 'CRITICAL',
+      name: 'Possible Dangling CNAME Subdomain Takeover',
+      severity: 'HIGH',
       status: 'FAIL',
-      evidence: takeoverFindings.map(f => `${f.subdomain} points to unclaimed CNAME: ${f.cname}`).join('\n'),
-      description: 'One or more subdomains point via CNAME to a cloud service (e.g. AWS S3, Heroku) that is no longer active. An attacker can register that unclaimed name at the provider and hijack the subdomain.',
+      evidence: takeoverFindings.map(f => `${f.subdomain} → ${f.cname} (${f.reason})`).join('\n'),
+      description: 'One or more subdomains point via CNAME to a cloud service hostname that does not resolve. If that name is genuinely unclaimed at the provider, an attacker can register it and serve content on your subdomain. Confirm the resource is unclaimed at the provider before deleting the record — DNS alone cannot prove exploitability.',
       fix: {
         type: 'dns-delete',
         record: { type: 'CNAME', name: takeoverFindings[0].subdomain, content: takeoverFindings[0].cname }
@@ -89,9 +94,9 @@ async function enumerate(domain) {
     severity: 'PASS',
     status: 'PASS',
     evidence: activeSubdomains.length > 0 
-      ? `Verified subdomains:\n${activeSubdomains.join('\n')}` 
-      : 'No active subdomains resolved during inspection',
-    description: 'No dangling CNAME records found pointing to inactive external services.'
+      ? `Checked ${SUBDOMAINS.length} common names; resolved:\n${activeSubdomains.join('\n')}` 
+      : `Checked ${SUBDOMAINS.length} common subdomain names; none resolved`,
+    description: `No dangling CNAME records were found among the ${SUBDOMAINS.length} common subdomain names probed. This is a fixed wordlist, not full subdomain enumeration — other subdomains were not tested.`
   };
 }
 

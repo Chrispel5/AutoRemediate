@@ -89,6 +89,7 @@ async function checkSPF(domain) {
       name: 'SPF Scan Inconclusive',
       severity: 'LOW',
       status: 'FAIL',
+      inconclusive: true,
       evidence: `DNS lookup error: ${err.code || err.message}`,
       description: 'The SPF check could not be completed due to a DNS timeout or network error. Re-run the scan to confirm before making changes.'
     };
@@ -158,6 +159,7 @@ async function checkDMARC(domain) {
       name: 'DMARC Scan Inconclusive',
       severity: 'LOW',
       status: 'FAIL',
+      inconclusive: true,
       evidence: `DNS lookup error: ${err.code || err.message}`,
       description: 'The DMARC check could not be completed due to a DNS timeout or network error. Re-run the scan to confirm before making changes.'
     };
@@ -203,6 +205,7 @@ async function checkMX(domain) {
       name: 'MX Scan Inconclusive',
       severity: 'LOW',
       status: 'FAIL',
+      inconclusive: true,
       evidence: `DNS lookup error: ${err.code || err.message}`,
       description: 'The MX check could not be completed due to a DNS timeout or network error. Re-run the scan to confirm.'
     };
@@ -210,6 +213,16 @@ async function checkMX(domain) {
 }
 
 async function checkDKIM(domain) {
+  // A domain with no MX records does not handle mail, so a missing DKIM key is
+  // "not applicable" rather than a finding the owner can ever act on.
+  let hasMx = false;
+  try {
+    const mx = await dnsRetry(() => resolver.resolveMx(domain));
+    hasMx = !!(mx && mx.length > 0);
+  } catch (e) {
+    hasMx = false;
+  }
+
   // Test common selectors
   const selectors = ['default', 'google', 'cloudflare', 'amazonses'];
   const dkimFindings = [];
@@ -237,13 +250,24 @@ async function checkDKIM(domain) {
     };
   }
 
+  if (!hasMx) {
+    return {
+      id: 'dkim-na',
+      name: 'DKIM Not Applicable (No Mail Service)',
+      severity: 'PASS',
+      status: 'PASS',
+      evidence: 'Domain publishes no MX records, so DKIM signing keys are not expected.',
+      description: 'DKIM only applies to domains that handle email. No mail exchange is configured for this domain.'
+    };
+  }
+
   return {
     id: 'dkim-missing',
     name: 'DKIM Public Record Not Found',
     severity: 'LOW',
     status: 'FAIL',
     evidence: 'Tried default selectors (default, google, cloudflare, amazonses) - none resolved',
-    description: 'We could not auto-detect a DKIM key record on common selectors. Make sure DKIM is published if you send email from this domain.'
+    description: 'We could not auto-detect a DKIM key record on common selectors. Make sure DKIM is published if you send email from this domain. Custom selectors are not discoverable via DNS.'
   };
 }
 
@@ -313,6 +337,7 @@ async function checkStaleTXT(domain) {
       name: 'TXT Hygiene Scan Inconclusive',
       severity: 'LOW',
       status: 'FAIL',
+      inconclusive: true,
       evidence: `DNS lookup error: ${err.code || err.message}`,
       description: 'The stale TXT token check could not be completed due to a DNS timeout or network error. Re-run the scan to confirm before making changes.'
     };

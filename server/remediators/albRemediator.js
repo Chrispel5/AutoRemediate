@@ -41,19 +41,38 @@ async function applyFix(connector, domain, finding) {
     return notApplicable(`No ALB found in the DNS chain for ${domain}`);
   }
 
-  const lbs = await connector.describeLoadBalancers();
-  const lb = lbs.find(l => l.dnsName === albDns);
+  // Discovery must not hard-fail the remediation: if the caller's credentials
+  // lack elasticloadbalancing permissions, or the ALB lives in another region,
+  // report notApplicable so the caller can fall back to CloudFront.
+  let lb;
+  try {
+    const lbs = await connector.describeLoadBalancers();
+    lb = lbs.find(l => l.dnsName === albDns);
+  } catch (e) {
+    return notApplicable(`Could not enumerate load balancers (${e.message})`);
+  }
   if (!lb) {
     return notApplicable(`ALB ${albDns} resolved in DNS but not found in this AWS account/region`);
   }
 
-  const listeners = await connector.describeListeners(lb.arn);
+  let listeners;
+  try {
+    listeners = await connector.describeListeners(lb.arn);
+  } catch (e) {
+    return notApplicable(`Could not enumerate listeners for ${albDns} (${e.message})`);
+  }
   if (listeners.length === 0) {
     return { success: false, error: `ALB ${albDns} has no listeners` };
   }
   const listener = listeners.find(l => l.port === 443) || listeners[0];
 
-  await connector.modifyListenerAttributes(listener.arn, { [attributeKey]: fix.value || '' });
+  // A failure from here on is a real remediation failure, not a routing
+  // decision — surface it instead of silently falling back.
+  try {
+    await connector.modifyListenerAttributes(listener.arn, { [attributeKey]: fix.value || '' });
+  } catch (e) {
+    return { success: false, error: `Failed to set ${fix.header} on ALB listener ${listener.arn}: ${e.message}` };
+  }
 
   // Verify the header is actually being served now
   try {

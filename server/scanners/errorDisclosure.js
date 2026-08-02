@@ -28,6 +28,16 @@ async function check(domain) {
   async function checkUrl(targetUrl, context) {
     try {
       const response = await fetch(targetUrl, { method: 'GET', timeout: 5000 });
+
+      // SPA/framework catch-all routes return 200 + the app shell for any
+      // path. Scanning that HTML (which often inlines bundle paths and
+      // source-map references) produced false "stack trace" hits, so a
+      // successful HTML response is treated as "no error page rendered".
+      const contentType = response.headers.get('content-type') || '';
+      if (response.status === 200 && contentType.includes('text/html')) {
+        return;
+      }
+
       const text = await response.text();
 
       for (const pattern of leakPatterns) {
