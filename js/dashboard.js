@@ -20,6 +20,12 @@ window.dashboard = (() => {
           ? 'CloudFront Response Headers Policy / Route 53 DNS (AWS API)'
           : 'AWS CLI / S3 Bucket metadata config policy';
         break;
+      case 'alb':
+        providerName = 'AWS Application Load Balancer authentication gateway';
+        remediationPath = window.connectedProviders && window.connectedProviders.aws
+          ? 'ALB listener attributes / application configuration (AWS API)'
+          : 'AWS ALB listener / application configuration';
+        break;
       case 'cloudflare':
         providerName = 'Cloudflare proxy edge network';
         remediationPath = 'Cloudflare Rulesets / Transform rules (Cloudflare API)';

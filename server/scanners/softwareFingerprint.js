@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+const { fetchWithinOrigin } = require('../utils/httpTarget');
 
 async function fingerprint(domain) {
   const url = `https://${domain}`;
@@ -10,7 +10,18 @@ async function fingerprint(domain) {
 
   try {
     // Check main response headers first
-    const mainResponse = await fetch(url, { method: 'GET', timeout: 5000 });
+    const mainResult = await fetchWithinOrigin(url, { method: 'GET', timeout: 5000 });
+    const mainResponse = mainResult.response;
+    if (mainResult.externalRedirect) {
+      return {
+        id: 'software-fingerprint-auth-limited',
+        name: 'Software Fingerprinting Limited by Authentication',
+        severity: 'LOW',
+        status: 'FAIL',
+        evidence: `Target redirects to external authentication origin: ${mainResult.externalRedirect}`,
+        description: 'The unauthenticated target response was inspected, but application HTML and version files behind authentication were not accessible.'
+      };
+    }
     const serverHeader = mainResponse.headers.get('server') || '';
     const xPoweredBy = mainResponse.headers.get('x-powered-by') || '';
 
@@ -33,7 +44,9 @@ async function fingerprint(domain) {
     // Proactively check common paths
     for (const path of pathChecks) {
       try {
-        const pathResponse = await fetch(url + path, { method: 'GET', timeout: 3000 });
+        const pathResult = await fetchWithinOrigin(url + path, { method: 'GET', timeout: 3000 });
+        const pathResponse = pathResult.response;
+        if (pathResult.externalRedirect) continue;
         if (pathResponse.status === 200) {
           const content = await pathResponse.text();
           // Check for version markers like "Version 1.2.3" or "v1.2.3" or framework version patterns

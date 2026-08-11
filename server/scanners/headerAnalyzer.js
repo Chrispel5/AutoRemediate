@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+const { fetchWithinOrigin } = require('../utils/httpTarget');
 
 async function analyze(domain) {
   const url = `https://${domain}`;
@@ -6,7 +6,7 @@ async function analyze(domain) {
   let infraType = 'unknown';
 
   try {
-    const response = await fetch(url, {
+    const { response, externalRedirect } = await fetchWithinOrigin(url, {
       method: 'GET',
       headers: { 'User-Agent': 'AutoRemediate-Scanner/1.0' },
       timeout: 10000
@@ -17,9 +17,12 @@ async function analyze(domain) {
     // Infrastructure detection
     const serverHeader = headers.get('server') || '';
     const xPoweredBy = headers.get('x-powered-by') || '';
+    const setCookies = headers.raw()['set-cookie'] || [];
 
     const serverLower = serverHeader.toLowerCase();
-    if (serverLower.includes('apache')) {
+    if (setCookies.some(cookie => /^AWSALBAuthNonce=/i.test(cookie))) {
+      infraType = 'alb';
+    } else if (serverLower.includes('apache')) {
       infraType = 'apache';
     } else if (serverLower.includes('nginx')) {
       infraType = 'nginx';
@@ -29,6 +32,17 @@ async function analyze(domain) {
       infraType = 'cloudflare';
     } else if (serverLower.includes('vercel') || headers.get('x-vercel-id')) {
       infraType = 'vercel';
+    }
+
+    if (externalRedirect) {
+      findings.push({
+        id: 'external-auth-redirect',
+        name: 'External Authentication Gateway Detected',
+        severity: 'LOW',
+        status: 'PASS',
+        evidence: `Target response redirects to external origin: ${externalRedirect}`,
+        description: 'Security headers were assessed on the target-owned redirect response. Authenticated application content was not scanned.'
+      });
     }
 
     // 1. Content-Security-Policy Check

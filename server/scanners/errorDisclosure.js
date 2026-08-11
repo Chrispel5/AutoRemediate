@@ -1,10 +1,11 @@
-const fetch = require('node-fetch');
+const { fetchWithinOrigin } = require('../utils/httpTarget');
 
 async function check(domain) {
   const url = `https://${domain}`;
   const badParamUrl = `${url}/?id='&test=1`;
   const badPathUrl = `${url}/nonexistent-path-12345`;
   const errorsLeaked = [];
+  let authenticationRedirects = 0;
 
   const leakPatterns = [
     /fatal error/i,
@@ -27,7 +28,12 @@ async function check(domain) {
 
   async function checkUrl(targetUrl, context) {
     try {
-      const response = await fetch(targetUrl, { method: 'GET', timeout: 5000 });
+      const result = await fetchWithinOrigin(targetUrl, { method: 'GET', timeout: 5000 });
+      if (result.externalRedirect) {
+        authenticationRedirects++;
+        return;
+      }
+      const response = result.response;
       const text = await response.text();
 
       for (const pattern of leakPatterns) {
@@ -60,6 +66,17 @@ async function check(domain) {
         type: 'config',
         notes: 'Turn off display_errors in production. Write custom error pages returning generic HTTP error numbers and code references.'
       }
+    };
+  }
+
+  if (authenticationRedirects > 0) {
+    return {
+      id: 'error-disclosure-auth-limited',
+      name: 'Error Handling Test Limited by Authentication',
+      severity: 'LOW',
+      status: 'FAIL',
+      evidence: 'Malformed and missing-path probes were redirected to an external identity provider.',
+      description: 'No target stack trace was observed, but authenticated application error responses could not be tested without a test session.'
     };
   }
 
