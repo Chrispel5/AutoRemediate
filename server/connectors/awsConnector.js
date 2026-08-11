@@ -150,22 +150,18 @@ class AWSConnector {
 
   // Verify credentials by calling GetCallerIdentity on STS
   async verifyCredentials() {
-    try {
-      // STS is global but default endpoint is sts.amazonaws.com
-      const xml = await this.request(
-        'sts',
-        'sts.amazonaws.com',
-        'POST',
-        '/',
-        {},
-        { 'Content-Type': 'application/x-www-form-urlencoded' },
-        'Action=GetCallerIdentity&Version=2011-06-15'
-      );
-      return xml.includes('GetCallerIdentityResult');
-    } catch (err) {
-      console.error('STS verification error:', err);
-      return false;
-    }
+    // Let AWS authentication errors reach the API response. The connector's
+    // error parser removes response noise while preserving the useful cause.
+    const xml = await this.request(
+      'sts',
+      'sts.amazonaws.com',
+      'POST',
+      '/',
+      {},
+      { 'Content-Type': 'application/x-www-form-urlencoded' },
+      'Action=GetCallerIdentity&Version=2011-06-15'
+    );
+    return xml.includes('GetCallerIdentityResult');
   }
 
   // Assume an IAM Role via STS and return temporary session credentials
