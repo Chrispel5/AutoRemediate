@@ -1,5 +1,26 @@
 // AWS CloudFront Headers Remediator
 
+const MANAGED_SECURITY_HEADERS_POLICY_ID = '67f7725c-6f97-4210-82d7-5512b31e9d03';
+const MANAGED_SECURITY_HEADERS = new Set([
+  'Strict-Transport-Security',
+  'X-Content-Type-Options',
+  'X-Frame-Options',
+  'Referrer-Policy'
+]);
+
+function isFreePlanCustomPolicyError(err) {
+  return /Free pricing plan[\s\S]*Custom response headers policy/i.test(err.message || '');
+}
+
+async function deleteUnattachedPolicy(connector, policyId) {
+  try {
+    const policy = await connector.getResponseHeadersPolicy(policyId);
+    await connector.deleteResponseHeadersPolicy(policyId, policy.etag);
+  } catch (cleanupErr) {
+    console.error(`[CloudFront] Could not delete unattached policy ${policyId}:`, cleanupErr.message);
+  }
+}
+
 function unescapeXml(value) {
   return value.toString()
     .replace(/&quot;/g, '"')
@@ -164,9 +185,26 @@ async function applyFix(connector, domain, finding) {
         updatedConfig = configMatch[0];
       }
 
-      // 5. Push configuration updates to CloudFront
-      await connector.updateDistributionConfig(distId, etag, updatedConfig);
-      policyNote = `attached new Response Headers Policy (${policyId})`;
+      // 5. Push configuration updates to CloudFront. Flat-rate Free plans do
+      // not allow custom policies, but they do allow AWS-managed policies.
+      try {
+        await connector.updateDistributionConfig(distId, etag, updatedConfig);
+        policyNote = `attached new Response Headers Policy (${policyId})`;
+      } catch (updateErr) {
+        await deleteUnattachedPolicy(connector, policyId);
+
+        if (!isFreePlanCustomPolicyError(updateErr) || !MANAGED_SECURITY_HEADERS.has(fix.header)) {
+          throw updateErr;
+        }
+
+        const managedConfig = updatedConfig.replace(
+          `<ResponseHeadersPolicyId>${policyId}</ResponseHeadersPolicyId>`,
+          `<ResponseHeadersPolicyId>${MANAGED_SECURITY_HEADERS_POLICY_ID}</ResponseHeadersPolicyId>`
+        );
+        await connector.updateDistributionConfig(distId, etag, managedConfig);
+        policyId = MANAGED_SECURITY_HEADERS_POLICY_ID;
+        policyNote = `attached AWS managed SecurityHeadersPolicy (${policyId}) for CloudFront Free plan compatibility`;
+      }
     }
 
     return {

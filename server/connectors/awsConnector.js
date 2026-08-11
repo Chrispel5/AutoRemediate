@@ -495,6 +495,19 @@ class AWSConnector {
     );
   }
 
+  // Delete an unattached custom Response Headers Policy.
+  async deleteResponseHeadersPolicy(policyId, etag) {
+    const path = `/2020-05-31/response-headers-policy/${policyId}`;
+    return await this.request(
+      'cloudfront',
+      'cloudfront.amazonaws.com',
+      'DELETE',
+      path,
+      {},
+      { 'If-Match': etag }
+    );
+  }
+
   // Update CloudFront Distribution Configuration
   async updateDistributionConfig(distributionId, etag, updatedConfigXml) {
     const path = `/2020-05-31/distribution/${distributionId}/config`;
