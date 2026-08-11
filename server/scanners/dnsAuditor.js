@@ -3,6 +3,36 @@ const { dnsRetry, resolver, resolveTxtJoined, isRecordAbsent } = require('../uti
 // Matches the DMARC p=none tag without matching sp=none (subdomain policy)
 const DMARC_P_NONE = /(^|;)\s*p\s*=\s*none/i;
 
+function getDmarcTag(record, tag) {
+  const match = record.match(new RegExp(`(?:^|;)\\s*${tag}\\s*=\\s*([^;\\s]+)`, 'i'));
+  return match ? match[1].toLowerCase() : null;
+}
+
+async function discoverDmarcPolicy(domain, resolveTxt = resolveTxtJoined) {
+  const labels = domain.split('.').filter(Boolean);
+
+  // DMARC policy discovery walks from the author domain toward its
+  // organizational domain. Avoid querying a single-label public suffix.
+  for (let offset = 0; labels.length - offset >= 2; offset++) {
+    const policyDomain = labels.slice(offset).join('.');
+    try {
+      const records = await resolveTxt(`_dmarc.${policyDomain}`);
+      const record = records.find(value => /^v=DMARC1/i.test(value));
+      if (record) {
+        return {
+          record,
+          policyDomain,
+          inherited: policyDomain !== domain
+        };
+      }
+    } catch (err) {
+      if (!isRecordAbsent(err)) throw err;
+    }
+  }
+
+  return null;
+}
+
 async function checkSPF(domain) {
   try {
     const records = await resolveTxtJoined(domain);
@@ -97,8 +127,8 @@ async function checkSPF(domain) {
 
 async function checkDMARC(domain) {
   try {
-    const records = await resolveTxtJoined(`_dmarc.${domain}`);
-    const dmarcRecord = records.find(r => /^v=DMARC1/i.test(r));
+    const discovered = await discoverDmarcPolicy(domain);
+    const dmarcRecord = discovered && discovered.record;
     
     if (!dmarcRecord) {
       return {
@@ -115,28 +145,45 @@ async function checkDMARC(domain) {
       };
     }
     
-    if (DMARC_P_NONE.test(dmarcRecord)) {
-      return {
+    const effectivePolicy = discovered.inherited
+      ? (getDmarcTag(dmarcRecord, 'sp') || getDmarcTag(dmarcRecord, 'p'))
+      : getDmarcTag(dmarcRecord, 'p');
+
+    if (effectivePolicy === 'none' || DMARC_P_NONE.test(dmarcRecord)) {
+      const finding = {
         id: 'dmarc-none',
-        name: 'DMARC Policy Set to Monitor (p=none)',
+        name: discovered.inherited
+          ? `Inherited DMARC Policy Is Monitoring Only (${discovered.policyDomain})`
+          : 'DMARC Policy Set to Monitor (p=none)',
         severity: 'CRITICAL',
         status: 'FAIL',
         evidence: `Current: ${dmarcRecord}`,
-        description: 'DMARC exists, but the policy is p=none (monitoring mode). Spoofed emails are not quarantined or blocked.',
-        fix: {
+        description: discovered.inherited
+          ? `The applicable DMARC policy is inherited from ${discovered.policyDomain}, but it is monitoring-only.`
+          : 'DMARC exists, but the policy is p=none (monitoring mode). Spoofed emails are not quarantined or blocked.'
+      };
+      if (!discovered.inherited) {
+        finding.fix = {
           type: 'dns-update',
           record: { type: 'TXT', name: `_dmarc.${domain}`, content: dmarcRecord.replace(DMARC_P_NONE, '$1p=quarantine') }
-        }
-      };
+        };
+      }
+      return finding;
     }
     
     return { 
       id: 'dmarc', 
-      name: 'DMARC Enforcement Active', 
+      name: discovered.inherited
+        ? `DMARC Enforcement Inherited from ${discovered.policyDomain}`
+        : 'DMARC Enforcement Active',
       severity: 'PASS', 
       status: 'PASS', 
-      evidence: dmarcRecord,
-      description: 'DMARC policy blocks or quarantines spoofed emails successfully.'
+      evidence: discovered.inherited
+        ? `Inherited policy: ${dmarcRecord}`
+        : dmarcRecord,
+      description: discovered.inherited
+        ? `The organizational-domain DMARC policy applies to ${domain} and enforces ${effectivePolicy}.`
+        : 'DMARC policy blocks or quarantines spoofed emails successfully.'
     };
   } catch (err) {
     if (isRecordAbsent(err)) {
@@ -322,6 +369,7 @@ async function checkStaleTXT(domain) {
 module.exports = {
   checkSPF,
   checkDMARC,
+  discoverDmarcPolicy,
   checkMX,
   checkDKIM,
   checkStaleTXT
