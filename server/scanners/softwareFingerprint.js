@@ -34,11 +34,7 @@ async function fingerprint(domain) {
     for (const path of pathChecks) {
       try {
         const pathResponse = await fetch(url + path, { method: 'GET', timeout: 3000 });
-        // SPA/framework catch-all routes answer 200 with index.html for every
-        // path. Fingerprinting that app shell as "/CHANGELOG.md exists" is a
-        // false positive, so only non-HTML bodies are inspected.
-        const pathContentType = pathResponse.headers.get('content-type') || '';
-        if (pathResponse.status === 200 && !pathContentType.includes('text/html')) {
+        if (pathResponse.status === 200) {
           const content = await pathResponse.text();
           // Check for version markers like "Version 1.2.3" or "v1.2.3" or framework version patterns
           const versionMatch = content.match(/version\s*(\d+\.\d+(\.\d+)?)/i);
@@ -75,11 +71,8 @@ async function fingerprint(domain) {
       name: 'Software Stacks Anonymized',
       severity: 'PASS',
       status: 'PASS',
-      // Only report what this scanner actually cleared. Echoing a versioned
-      // Server header here contradicted the PASS verdict; header-based
-      // disclosure is owned by the header scan.
-      evidence: 'No version markers found in meta generator tags or changelog files.',
-      description: 'No application version tags were exposed via HTML metadata or public changelog files. (Header-based version disclosure is reported separately by the header scan.)'
+      evidence: detectedInfo.join('\n') || 'No headers or files disclosed technology versions.',
+      description: 'System software name or application version tags are successfully hidden from scanning components.'
     };
 
   } catch (err) {

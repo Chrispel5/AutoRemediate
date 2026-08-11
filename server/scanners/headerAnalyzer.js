@@ -33,16 +33,13 @@ async function analyze(domain) {
 
     // 1. Content-Security-Policy Check
     const csp = headers.get('content-security-policy');
-    const cspReportOnly = headers.get('content-security-policy-report-only');
     if (!csp) {
       findings.push({
         id: 'csp-missing',
         name: 'Content-Security-Policy Header Missing',
         severity: 'HIGH',
         status: 'FAIL',
-        evidence: cspReportOnly
-          ? 'Content-Security-Policy: (Not present) — Content-Security-Policy-Report-Only is set but does not enforce anything'
-          : 'Content-Security-Policy: (Not present)',
+        evidence: 'Content-Security-Policy: (Not present)',
         description: 'The Content-Security-Policy header restricts resources that can load on your pages, protecting against Cross-Site Scripting (XSS).',
         fix: {
           type: 'cloudflare-rule',
@@ -89,13 +86,8 @@ async function analyze(domain) {
     }
 
     // 3. X-Frame-Options Check
-    // Only a single exact directive is valid. Browsers ignore combined values
-    // such as "SAMEORIGIN, DENY", so those must be treated as missing rather
-    // than passing a substring check.
     const xfo = headers.get('x-frame-options');
-    const xfoValue = (xfo || '').toLowerCase().trim();
-    const xfoValid = xfoValue === 'deny' || xfoValue === 'sameorigin';
-    if (!xfoValid) {
+    if (!xfo || (!xfo.toLowerCase().includes('deny') && !xfo.toLowerCase().includes('sameorigin'))) {
       findings.push({
         id: 'xframe-missing',
         name: 'X-Frame-Options Header Missing / Weak',
@@ -202,9 +194,7 @@ async function analyze(domain) {
     }
 
     // 7. Server Header Version Disclosure Check
-    // CDN banners like "cloudflare-nginx/1.1" are noise rather than a
-    // CVE-targetable origin version, so they are not flagged.
-    const versionExposed = serverHeader && /\d+\.\d+/.test(serverHeader) && !serverLower.includes('cloudflare');
+    const versionExposed = serverHeader && /\d+\.\d+/.test(serverHeader);
     if (versionExposed) {
       findings.push({
         id: 'server-version-exposed',

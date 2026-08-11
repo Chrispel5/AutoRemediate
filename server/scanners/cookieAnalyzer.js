@@ -39,47 +39,25 @@ async function analyze(domain) {
       const cookieIssues = [];
       if (!isHttpOnly) cookieIssues.push('HttpOnly flag missing');
       if (!isSecure) cookieIssues.push('Secure flag missing');
+      if (!isSameSite) cookieIssues.push('SameSite attribute missing');
 
       if (cookieIssues.length > 0) {
-        // Missing HttpOnly/Secure is a real session-theft risk -> MODERATE.
-        issues.push({ cookie: name, problems: cookieIssues, severe: true });
-      } else if (!isSameSite) {
-        // SameSite alone is CSRF hardening. Third-party analytics cookies
-        // routinely omit it and the site owner cannot change them, so this
-        // is reported separately at LOW instead of inflating MODERATE.
-        issues.push({ cookie: name, problems: ['SameSite attribute missing'], severe: false });
+        issues.push(`Cookie: "${name}" | Issues: ${cookieIssues.join(', ')}`);
       }
     });
 
-    const fmt = list => list
-      .map(i => `Cookie: "${i.cookie}" | Issues: ${i.problems.join(', ')}`)
-      .join('\n');
-    const severeIssues = issues.filter(i => i.severe);
-    const minorIssues = issues.filter(i => !i.severe);
-
-    if (severeIssues.length > 0) {
+    if (issues.length > 0) {
       return {
         id: 'cookie-insecure',
         name: 'Cookie Configuration Missing Security Flags',
         severity: 'MODERATE',
         status: 'FAIL',
-        evidence: fmt(severeIssues),
+        evidence: issues.join('\n'),
         description: 'Cookies lacking HttpOnly are vulnerable to client-side script reading (XSS session hijacking). Cookies without Secure can be transmitted in plain text over unencrypted HTTP.',
         fix: {
           type: 'config',
           notes: 'Set session cookies with Secure, HttpOnly, and SameSite=Strict attributes in backend configurations.'
         }
-      };
-    }
-
-    if (minorIssues.length > 0) {
-      return {
-        id: 'cookie-samesite',
-        name: 'Cookies Missing SameSite Attribute',
-        severity: 'LOW',
-        status: 'FAIL',
-        evidence: fmt(minorIssues),
-        description: 'Some cookies do not declare SameSite. These carry HttpOnly and Secure, so this is CSRF hardening rather than a session-theft risk — and third-party cookies may not be under your control.'
       };
     }
 

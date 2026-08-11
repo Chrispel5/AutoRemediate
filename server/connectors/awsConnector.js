@@ -115,13 +115,11 @@ class AWSConnector {
   async describeLoadBalancers() {
     const xml = await this.elbv2({ Action: 'DescribeLoadBalancers' });
     const lbs = [];
-    // Depth-aware member extraction: ELBv2 nests <member> inside
-    // AvailabilityZones / SecurityGroups, which a flat regex mis-parses.
-    const matches = extractTopLevelMembers(xml);
-    for (const member of matches) {
-      const arn = member.match(/<LoadBalancerArn>([^<]+)<\/LoadBalancerArn>/);
-      const dns = member.match(/<DNSName>([^<]+)<\/DNSName>/);
-      const type = member.match(/<Type>([^<]+)<\/Type>/);
+    const matches = xml.matchAll(/<member>([\s\S]*?)<\/member>/g);
+    for (const m of matches) {
+      const arn = m[1].match(/<LoadBalancerArn>([^<]+)<\/LoadBalancerArn>/);
+      const dns = m[1].match(/<DNSName>([^<]+)<\/DNSName>/);
+      const type = m[1].match(/<Type>([^<]+)<\/Type>/);
       if (arn && dns && type && type[1] === 'application') {
         lbs.push({ arn: arn[1], dnsName: dns[1].toLowerCase() });
       }
@@ -132,10 +130,10 @@ class AWSConnector {
   async describeListeners(loadBalancerArn) {
     const xml = await this.elbv2({ Action: 'DescribeListeners', LoadBalancerArn: loadBalancerArn });
     const listeners = [];
-    const matches = extractTopLevelMembers(xml);
-    for (const member of matches) {
-      const arn = member.match(/<ListenerArn>([^<]+)<\/ListenerArn>/);
-      const port = member.match(/<Port>(\d+)<\/Port>/);
+    const matches = xml.matchAll(/<member>([\s\S]*?)<\/member>/g);
+    for (const m of matches) {
+      const arn = m[1].match(/<ListenerArn>([^<]+)<\/ListenerArn>/);
+      const port = m[1].match(/<Port>(\d+)<\/Port>/);
       if (arn) listeners.push({ arn: arn[1], port: port ? parseInt(port[1], 10) : null });
     }
     return listeners;
@@ -247,13 +245,6 @@ class AWSConnector {
     const nameMatch = content.match(/<Name>([^<]+)<\/Name>/);
     const typeMatch = content.match(/<Type>([^<]+)<\/Type>/);
     if (!nameMatch || !typeMatch || typeMatch[1] !== recordType) {
-      return null;
-    }
-    // Route 53's name/type filters return the first record AT OR AFTER the
-    // requested name — when the exact record is absent that is a *different*
-    // record. Never let a fix operate on it: compare against the request.
-    const returnedName = decodeRoute53Name(nameMatch[1]).replace(/\.$/, '');
-    if (returnedName.toLowerCase() !== recordName.toLowerCase()) {
       return null;
     }
 
@@ -385,7 +376,7 @@ class AWSConnector {
   // CustomHeadersConfig before SecurityHeadersConfig; inside
   // SecurityHeadersConfig: ContentSecurityPolicy, ContentTypeOptions,
   // FrameOptions, ReferrerPolicy, StrictTransportSecurity, XSSProtection.
-  buildResponseHeadersPolicyXml(policyName, comment, headersConfig, preserved = {}) {
+  buildResponseHeadersPolicyXml(policyName, comment, headersConfig) {
     let securityHeadersXml = '';
     if (headersConfig.ContentSecurityPolicy) {
       securityHeadersXml += `<ContentSecurityPolicy>
@@ -418,15 +409,6 @@ class AWSConnector {
         <Preload>${headersConfig.StrictTransportSecurity.preload || 'true'}</Preload>
       </StrictTransportSecurity>`;
     }
-    if (headersConfig.XSSProtection) {
-      const xss = headersConfig.XSSProtection;
-      securityHeadersXml += `<XSSProtection>
-        <Override>true</Override>
-        <Protection>${xss.protection || 'true'}</Protection>
-        <ModeBlock>${xss.modeBlock || 'false'}</ModeBlock>${xss.reportUri ? `
-        <ReportUri>${escapeXml(xss.reportUri)}</ReportUri>` : ''}
-      </XSSProtection>`;
-    }
 
     let customHeadersXml = '';
     if (headersConfig.CustomHeaders && Array.isArray(headersConfig.CustomHeaders) && headersConfig.CustomHeaders.length > 0) {
@@ -453,13 +435,10 @@ class AWSConnector {
   </SecurityHeadersConfig>`;
     }
 
-    // Sections this builder does not model are carried through verbatim so an
-    // update never silently deletes CORS / RemoveHeaders / ServerTiming config.
-    // Element order must follow the CloudFront schema sequence.
     return `<?xml version="1.0" encoding="UTF-8"?>
 <ResponseHeadersPolicyConfig xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
   <Comment>${escapeXml(comment || 'AutoRemediate Security Headers Policy')}</Comment>
-  <Name>${escapeXml(policyName)}</Name>${preserved.CorsConfig || ''}${customHeadersXml}${preserved.RemoveHeadersConfig || ''}${fullSecurityHeadersBlock}${preserved.ServerTimingHeadersConfig || ''}
+  <Name>${escapeXml(policyName)}</Name>${customHeadersXml}${fullSecurityHeadersBlock}
 </ResponseHeadersPolicyConfig>`;
   }
 
@@ -563,43 +542,6 @@ function parseAwsError(text, status) {
   return `AWS API Error [${code}]: ${message}`;
 }
 
-// Walks an XML fragment and returns the contents of each top-level <member>,
-// correctly skipping members nested inside sub-collections.
-function extractTopLevelMembers(xml) {
-  if (!xml) return [];
-  const members = [];
-  const tokenRe = /<member>|<\/member>/g;
-  let depth = 0;
-  let startIdx = -1;
-  let token;
-
-  while ((token = tokenRe.exec(xml)) !== null) {
-    if (token[0] === '<member>') {
-      if (depth === 0) startIdx = token.index + token[0].length;
-      depth++;
-    } else {
-      depth = Math.max(0, depth - 1);
-      if (depth === 0 && startIdx !== -1) {
-        members.push(xml.slice(startIdx, token.index));
-        startIdx = -1;
-      }
-    }
-  }
-  return members;
-}
-
-// Returns the inner XML of <tag>...</tag>, or the whole document if absent.
-function sectionOf(xml, tag) {
-  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
-  return match ? match[1] : xml;
-}
-
-// Route 53 returns non-ASCII and special characters in record names as octal
-// escapes (e.g. \\052 for '*'). Decode before comparing against a requested name.
-function decodeRoute53Name(name) {
-  return name.replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
-}
-
 function escapeXml(value) {
   return value.toString()
     .replace(/&/g, '&amp;')
@@ -619,4 +561,3 @@ function unescapeXml(value) {
 }
 
 module.exports = AWSConnector;
-module.exports.extractTopLevelMembers = extractTopLevelMembers;

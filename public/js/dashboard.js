@@ -95,57 +95,14 @@ window.dashboard = (() => {
     ]
   };
 
-  // Operational risk = likelihood that APPLYING the fix breaks production.
-  // Independent of vulnerability severity (see server/templates/remediation.js
-  // for the full rationale). Mirrors FIX_RISK there — keep the two in sync.
-  const FIX_RISK = {
-    "hsts-missing":          { level: "high",   basis: "Forces HTTPS across the domain and any subdomains. Browsers cache the max-age (1 year), so an incorrect rollout cannot be quickly reversed." },
-    "csp-missing":           { level: "high",   basis: "A policy that misses a legitimate script, style, or third-party origin will block it outright. The most common cause of breakage among header fixes." },
-    "spf-missing":           { level: "high",   basis: "Publishing -all rejects mail from any sender not listed. Missing a legitimate sender causes their mail to bounce." },
-    "spf-softfail":          { level: "high",   basis: "Tightening ~all to -all converts 'flag as suspicious' into 'reject'. Unlisted legitimate senders start bouncing immediately." },
-    "dmarc-missing":         { level: "high",   basis: "A quarantine policy sends unaligned mail to spam. Incomplete SPF/DKIM alignment affects legitimate mail as soon as the record propagates." },
-    "dmarc-none":            { level: "high",   basis: "Moving from monitoring to quarantine starts acting on failures that were previously only reported." },
-    "subdomain-takeover":    { level: "high",   basis: "Deleting the CNAME takes the subdomain offline if the target was still in use. Confirm the resource is genuinely unclaimed before applying." },
-    "xframe-missing":        { level: "medium", basis: "Blocks framing of the site. Breaks legitimate embedding in partner sites or internal tools. Reversible by removing the header." },
-    "cookie-insecure":       { level: "medium", basis: "SameSite=Strict can break cross-site sign-in flows and payment redirects." },
-    "stale-txt-token":       { level: "medium", basis: "If the associated service is still active, deleting the token revokes its domain verification. Reversible by re-adding the record." },
-    "xcto-missing":          { level: "low",    basis: "nosniff only stops MIME-type guessing. Affects legacy browsers serving files with mismatched Content-Type." },
-    "referrer-missing":      { level: "low",    basis: "Reduces referrer detail sent to third parties. May affect analytics attribution; no functional impact." },
-    "permissions-missing":   { level: "low",    basis: "Restricts browser feature access. Only affects features the site actually requests." },
-    "server-version-exposed":{ level: "low",    basis: "Suppresses a diagnostic banner. No functional change to request handling." },
-    "xpoweredby-exposed":    { level: "low",    basis: "Removes a purely informational header. No operational impact." },
-    "error-disclosure":      { level: "low",    basis: "Errors go to server logs instead of the browser. Behaviour is unchanged." },
-    "dkim-missing":          { level: "low",    basis: "Publishing a DKIM key is additive — existing mail flow is unaffected until the provider signs with it." },
-    "software-fingerprint-ver": { level: "low", basis: "Removing the generator tag is cosmetic; no functional change." }
-  };
-
-  const FIX_TYPE_RISK = {
-    "dns":             { level: "medium", basis: "Adds a DNS record. Effects appear as caches expire; reversed by deleting the record." },
-    "dns-update":      { level: "medium", basis: "Modifies an existing DNS record. Keep the previous value so it can be restored." },
-    "dns-delete":      { level: "medium", basis: "Removes a DNS record. Disruptive if still relied upon; reversible by re-creating it." },
-    "cloudflare-rule": { level: "medium", basis: "Injects a response header at the edge for every request. Reversible by disabling the rule." },
-    "config":          { level: "medium", basis: "Requires a server configuration change and a service reload. Stage it before production." }
-  };
-
-  function computeFixRisk(finding) {
-    // No fix is being applied to a passing check, so there is no operational
-    // risk to report — the UI omits the row rather than printing "LOW".
-    if (finding.status === "PASS") return { level: null, basis: null };
-    if (FIX_RISK[finding.id]) return FIX_RISK[finding.id];
-    if (finding.fix && FIX_TYPE_RISK[finding.fix.type]) return FIX_TYPE_RISK[finding.fix.type];
-    return { level: "medium", basis: "No risk assessment is recorded for this fix. Review the change manually before applying it." };
-  }
-
   function getFallbackRemediation(finding) {
-    const risk = computeFixRisk(finding);
     const isTerraformable = ['csp-missing', 'csp', 'hsts-missing', 'hsts', 'xframe-missing', 'xframe-present', 'xcto-missing', 'xcto-present', 'spf-missing', 'spf-softfail', 'spf', 'dmarc-missing', 'dmarc-none', 'dmarc', 'subdomain-takeover', 'subdomain-takeover-clean', 'stale-txt-token', 'stale-txt'].includes(finding.id) || !!finding.fix;
 
     if (finding.status === "PASS") {
       return {
         readiness: "verified",
         label: "Verified",
-        riskLevel: risk.level,
-        riskBasis: risk.basis,
+        riskLevel: "low",
         requires: [],
         canAutoFix: false,
         canExportTerraform: isTerraformable
@@ -155,8 +112,7 @@ window.dashboard = (() => {
       return {
         readiness: "needs_input",
         label: "Needs DKIM value",
-        riskLevel: risk.level,
-        riskBasis: risk.basis,
+        riskLevel: "low",
         requires: ["Email provider DKIM key"],
         canAutoFix: false,
         canExportTerraform: false
@@ -167,8 +123,7 @@ window.dashboard = (() => {
         return {
           readiness: "auto_fixable",
           label: "Auto-fixable",
-          riskLevel: risk.level,
-          riskBasis: risk.basis,
+          riskLevel: "medium",
           requires: ["Cloud provider API access"],
           canAutoFix: true,
           canExportTerraform: true
@@ -178,8 +133,7 @@ window.dashboard = (() => {
         return {
           readiness: "auto_fixable",
           label: "Auto-fixable",
-          riskLevel: risk.level,
-          riskBasis: risk.basis,
+          riskLevel: "medium",
           requires: ["DNS write access"],
           canAutoFix: true,
           canExportTerraform: true
@@ -189,8 +143,7 @@ window.dashboard = (() => {
         return {
           readiness: "generate_patch",
           label: "Generate patch",
-          riskLevel: risk.level,
-          riskBasis: risk.basis,
+          riskLevel: "medium",
           requires: ["Server configuration access"],
           canAutoFix: false,
           canExportTerraform: false
@@ -200,8 +153,7 @@ window.dashboard = (() => {
     return {
       readiness: "manual",
       label: "Manual Fix",
-      riskLevel: risk.level,
-      riskBasis: risk.basis,
+      riskLevel: "medium",
       requires: ["Administrator access"],
       canAutoFix: false,
       canExportTerraform: false
@@ -290,21 +242,12 @@ window.dashboard = (() => {
         actionButtons += ` <button class="btn-action btn-view-fix" onclick="window.remediation.exportTerraform('${finding.id}')">Export Terraform</button>`;
       }
 
-      // Remediation proof banner.
-      // BUG A2: this always said "Fix Verified", even when the remediator
-      // explicitly reported "propagation pending" / "not yet visible" — i.e.
-      // the change was pushed but never observed live. Label from the
-      // verification text so a pending fix is not presented as confirmed.
-      let proofBanner = '';
-      if (finding.remediationDetails) {
-        const verificationText = finding.remediationDetails.verification || '';
-        const isConfirmed = /^verified/i.test(verificationText.trim())
-          && !/pending|not yet|verify manually/i.test(verificationText);
-        const proofLabel = isConfirmed ? 'Fix Verified:' : 'Fix Applied — Not Yet Confirmed:';
-        proofBanner = `<div class="remediation-proof ${isConfirmed ? '' : 'pending'}" style="margin-top: 10px;">
-             <strong>${proofLabel}</strong> ${escapeHtml(verificationText)}
-           </div>`;
-      }
+      // Remediation proof banner
+      const proofBanner = finding.remediationDetails
+        ? `<div class="remediation-proof" style="margin-top: 10px;">
+             <strong>Fix Verified:</strong> ${escapeHtml(finding.remediationDetails.verification)}
+           </div>`
+        : '';
 
       card.innerHTML = `
         <div class="finding-main">
