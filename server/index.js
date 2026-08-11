@@ -7,6 +7,7 @@ const path = require('path');
 const fetch = require('node-fetch');
 const { normalizeDomain, isRecordNameAllowed } = require('./utils/domain');
 const { createRateLimiter } = require('./utils/rateLimit');
+const { isRemediationVerified } = require('./utils/remediationVerification');
 
 // Import Scanners
 const dnsAuditor = require('./scanners/dnsAuditor');
@@ -448,15 +449,26 @@ app.post('/api/remediate', async (req, res) => {
     }
 
     if (remediationResult && remediationResult.success) {
-      // Update finding status to PASS
-      scan.findings[findingIndex].status = 'PASS';
-      scan.findings[findingIndex].severity = 'PASS';
-      scan.findings[findingIndex].remediationDetails = remediationResult;
+      // Applying a change and confirming it live are separate outcomes. Keep
+      // the finding open while DNS/CDN propagation or verification is pending.
+      const actuallyVerified = isRemediationVerified(remediationResult);
+      scan.findings[findingIndex].status = actuallyVerified ? 'PASS' : 'FAIL';
+      if (actuallyVerified) {
+        scan.findings[findingIndex].severity = 'PASS';
+      }
+      scan.findings[findingIndex].remediationDetails = {
+        ...remediationResult,
+        verified: actuallyVerified
+      };
       
       // Update scanCache
       cacheScan(scanId, scan);
       try { scanDb.recordRemediation(scanId, findingId, provider, remediationResult.verification); } catch (e) { console.error('[DB] recordRemediation failed:', e.message); }
-      return res.json({ success: true, finding: scan.findings[findingIndex] });
+      return res.json({
+        success: true,
+        verified: actuallyVerified,
+        finding: scan.findings[findingIndex]
+      });
     } else {
       let errText = remediationResult ? remediationResult.error : 'Unknown error during remediation';
       if (errText.includes('Route 53 hosted zone not found') && scan.target.includes('cloudfront.net')) {
