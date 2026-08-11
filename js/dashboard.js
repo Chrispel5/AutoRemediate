@@ -26,6 +26,12 @@ window.dashboard = (() => {
           ? 'ALB listener attributes / application configuration (AWS API)'
           : 'AWS ALB listener / application configuration';
         break;
+      case 'cloudfront':
+        providerName = 'Amazon CloudFront with authenticated AWS origin';
+        remediationPath = window.connectedProviders && window.connectedProviders.aws
+          ? 'CloudFront Response Headers Policy (AWS API)'
+          : 'AWS CloudFront distribution configuration';
+        break;
       case 'cloudflare':
         providerName = 'Cloudflare proxy edge network';
         remediationPath = 'Cloudflare Rulesets / Transform rules (Cloudflare API)';

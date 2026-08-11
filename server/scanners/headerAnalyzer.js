@@ -20,7 +20,10 @@ async function analyze(domain) {
     const setCookies = headers.raw()['set-cookie'] || [];
 
     const serverLower = serverHeader.toLowerCase();
-    if (setCookies.some(cookie => /^AWSALBAuthNonce=/i.test(cookie))) {
+    const viaHeader = headers.get('via') || '';
+    if (headers.get('x-amz-cf-id') || /cloudfront/i.test(viaHeader)) {
+      infraType = 'cloudfront';
+    } else if (setCookies.some(cookie => /^AWSALBAuthNonce=/i.test(cookie))) {
       infraType = 'alb';
     } else if (serverLower.includes('apache')) {
       infraType = 'apache';
