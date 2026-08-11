@@ -593,38 +593,13 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
     const provider = window.connectedProviders && window.connectedProviders.aws && !window.connectedProviders.cloudflare
       ? 'aws'
       : 'cloudflare';
-    const verifyConfirm = confirm(`Are you sure you want to apply this auto-remediation rule via ${providerLabel}?`);
-    if (!verifyConfirm) return;
-
     if (isStaticEnv || window.scanIsLocal) {
-      // Simulate API call and verification latency
-      const targetBtn = document.querySelector(`[onclick*="window.remediation.apply('${scanId}', '${findingId}')"]`);
-      if (targetBtn) {
-        targetBtn.disabled = true;
-        targetBtn.textContent = 'Applying...';
-      }
-
-      await new Promise(r => setTimeout(r, 1500));
-
-      if (targetBtn) {
-        targetBtn.textContent = 'Verifying...';
-      }
-
-      await new Promise(r => setTimeout(r, 1000));
-
-      alert(`Vulnerability successfully auto-remediated and verified via ${providerLabel}!`);
-      
-      // Mark the stored finding as fixed and re-render so badges stay consistent
-      const localFinding = window.currentFindings && window.currentFindings.find(f => f.id === findingId);
-      if (localFinding) {
-        localFinding.status = 'PASS';
-      }
-      if (window.currentFindings) {
-        window.dashboard.renderFindings(window.currentFindings, window.currentScanId);
-      }
-      closeCopilot();
+      alert('Auto-fix requires a live AutoRemediate backend and a connected cloud provider. No change was applied.');
       return;
     }
+
+    const verifyConfirm = confirm(`Are you sure you want to apply this auto-remediation rule via ${providerLabel}?`);
+    if (!verifyConfirm) return;
 
     try {
       const response = await fetch('/api/remediate', {
@@ -635,7 +610,9 @@ resource "aws_cloudfront_response_headers_policy" "autoremediate_${cleanId}" {
 
       const data = await response.json();
       if (response.ok && data.success) {
-        alert('Vulnerability successfully auto-remediated and verified!');
+        alert(data.verified
+          ? 'Vulnerability successfully auto-remediated and verified!'
+          : 'The fix was applied, but live verification is still pending. Re-scan shortly to confirm it.');
         
         // Merge the remediated finding returned by the backend into the stored
         // findings (same array referenced by window.currentScanData.findings)

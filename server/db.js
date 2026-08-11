@@ -2,6 +2,7 @@
 const path = require('path');
 const fs = require('fs');
 const { DatabaseSync } = require('node:sqlite');
+const { isRemediationVerified } = require('./utils/remediationVerification');
 
 const dataDir = path.join(__dirname, '..', 'data');
 fs.mkdirSync(dataDir, { recursive: true });
@@ -72,7 +73,7 @@ function listScans() {
 }
 
 function recordRemediation(scanId, findingId, provider, verification) {
-  const verified = verification && /verified/i.test(verification) && !/pending/i.test(verification) ? 1 : 0;
+  const verified = isRemediationVerified({ success: true, verification }) ? 1 : 0;
   insertRemediation.run(scanId, findingId, provider || null, verified, verification || null, new Date().toISOString());
 }
 

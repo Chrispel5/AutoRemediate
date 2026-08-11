@@ -184,8 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
 
       if (isStaticEnv) {
-        // Run completely client-side via Cloudflare DNS-over-HTTPS
-        currentScanData = await runClientSideScan(target);
+        throw new Error('Security scans require the AutoRemediate backend. Start the server with npm start and open http://localhost:3000.');
       } else {
         try {
           const response = await fetch('/api/scan', {
@@ -199,9 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           currentScanData = await response.json();
         } catch (apiErr) {
-          // Fallback to DNS-over-HTTPS scan if backend server fails to respond
-          console.warn('Backend unavailable, falling back to client-side scan.');
-          currentScanData = await runClientSideScan(target);
+          throw new Error('AutoRemediate backend unavailable. Confirm npm start is running, then try again.');
         }
       }
 

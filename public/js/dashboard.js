@@ -245,7 +245,7 @@ window.dashboard = (() => {
       // Remediation proof banner
       const proofBanner = finding.remediationDetails
         ? `<div class="remediation-proof" style="margin-top: 10px;">
-             <strong>Fix Verified:</strong> ${escapeHtml(finding.remediationDetails.verification)}
+             <strong>${finding.remediationDetails.verified ? 'Fix Verified:' : 'Fix Applied, Verification Pending:'}</strong> ${escapeHtml(finding.remediationDetails.verification)}
            </div>`
         : '';
 
